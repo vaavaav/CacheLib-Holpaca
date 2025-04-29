@@ -1,28 +1,48 @@
 #include "CacheAllocator.h"
 
-#include <algorithm>
-#include <vector>
+#include <grpcpp/create_channel.h>
 
 namespace facebook {
 namespace cachelib {
 namespace holpaca {
 
 template <typename CacheTrait>
-CacheAllocator<CacheTrait>::CacheAllocator(Config config)
-    : ::facebook::cachelib::CacheAllocator<CacheTrait>(config.m_config) {
-  m_stage = std::make_shared<Stage>(static_cast<Cache*>(this), config.m_address,
-                                    config.m_controllerAddress);
-}
+grpc::Status CacheAllocator<CacheTrait>::GetStatus(
+    grpc::ServerContext* context,
+    const ::holpaca::GetStatusRequest* request,
+    ::holpaca::GetStatusResponse* response) {
+  auto pools = response->mutable_pools();
+  auto pidsExceptGhost = this->getPoolIds();
+  pidsExceptGhost.erase(kGhostPoolId);
+  for (const auto pid : pidsExceptGhost) {
+    auto stats = this->getPoolStats(pid);
+    ::holpaca::GetStatusResponse::PoolStatus s;
+    s.set_maxsize(stats.poolSize);
+    s.set_usedsize(stats.poolUsableSize + stats.poolAdvisedSize);
+    for (auto const& [cid, cs] : stats.cacheStats) {
+      s.mutable_tailaccesses()->insert(
+          {static_cast<uint32_t>(cid),
+           static_cast<uint32_t>(cs.containerStat.numTailAccesses)});
+    }
+    auto mrc = m_shards[pid]->mrc();
+    s.mutable_mrc()->insert(mrc.begin(), mrc.end());
+    pools->insert({pid, s});
+  }
 
+  return grpc::Status::OK;
+}
+// TODO: steal space from the ghost pool (and give it back if needed)
 template <typename CacheTrait>
-void CacheAllocator<CacheTrait>::resize(
-    std::unordered_map<int32_t, uint64_t> newSizes) {
+grpc::Status CacheAllocator<CacheTrait>::Resize(
+    grpc::ServerContext* context,
+    const ::holpaca::ResizeRequest* request,
+    ::holpaca::ResizeResponse* response) {
   // CacheLib provides a resize method based on relative (not absolute sizes)
-  auto poolStats = this->getStatus();
   std::vector<std::pair<int32_t, int64_t>> sortedRelSizes; // relSizes may
                                                            // be negative
-  for (const auto& [poolId, newSize] : newSizes) {
-    sortedRelSizes.push_back({poolId, newSize - poolStats[poolId].maxSize});
+  for (const auto& [poolId, newSize] : request->newsizes()) {
+    sortedRelSizes.push_back(
+        {poolId, newSize - this->getPoolStats(poolId).poolSize});
   }
 
   // resizing must be done in order from the most to least downsized pool
@@ -33,66 +53,70 @@ void CacheAllocator<CacheTrait>::resize(
   for (auto [poolId, relSize] : sortedRelSizes) {
     if (relSize < 0) {
       // downsizing
-      Super::shrinkPool(static_cast<::facebook::cachelib::PoolId>(poolId),
-                        -relSize);
+      this->shrinkPool(static_cast<::facebook::cachelib::PoolId>(poolId),
+                       -relSize);
     } else {
       // upsizing
-      Super::growPool(static_cast<::facebook::cachelib::PoolId>(poolId),
-                      relSize);
+      this->growPool(static_cast<::facebook::cachelib::PoolId>(poolId),
+                     relSize);
     }
   }
+  return grpc::Status::OK;
 }
 
 template <typename CacheTrait>
-std::unordered_map<int32_t, PoolStatus>
-CacheAllocator<CacheTrait>::getStatus() {
-  std::unordered_map<int32_t, PoolStatus> poolStatus;
-  for (auto const pid : Super::getPoolIds()) {
-    auto stats = Super::getPoolStats(pid);
-    PoolStatus s;
-    s.maxSize = stats.poolSize;
-    s.usedSize = stats.poolUsableSize + stats.poolAdvisedSize;
-    for (auto const& [cid, cs] : stats.cacheStats) {
-      s.tailAccesses[cid] = cs.containerStat.numTailAccesses;
+CacheAllocator<CacheTrait>::CacheAllocator(Config& config)
+    : ::facebook::cachelib::CacheAllocator<CacheTrait>(config), // deliberate
+                                                                // slicing
+      kGhostPoolId(Super::addPool("ghost",
+                                  Super::getCacheMemoryStats().ramCacheSize *
+                                      s_kGhostPoolRelativeSize)) {
+  m_server =
+      grpc::ServerBuilder()
+          .AddListeningPort(config.m_address, grpc::InsecureServerCredentials())
+          .RegisterService(dynamic_cast<::holpaca::Stage::Service*>(this))
+          .BuildAndStart();
+  m_serverThread = std::thread([this] { m_server->Wait(); });
+  m_keepAliveThread = std::thread([this, config] {
+    auto controllerStub = ::holpaca::Controller::NewStub(grpc::CreateChannel(
+        config.m_controllerAddress, grpc::InsecureChannelCredentials()));
+    while (!m_stop) {
+      grpc::ClientContext ctx;
+      ::holpaca::KeepAliveRequest req;
+      ::holpaca::KeepAliveResponse rep;
+      req.set_address(config.m_address);
+      controllerStub->KeepAlive(&ctx, req, &rep);
+      std::this_thread::sleep_for(s_KeepAlivePeriodicity);
     }
-    s.mrc = m_flows[pid]->bmrc();
-    poolStatus[pid] = std::move(s);
-  }
-  return poolStatus;
+  });
 }
 
 template <typename CacheTrait>
 PoolId CacheAllocator<CacheTrait>::addPool(std::string name, size_t size) {
   auto poolId = Super::addPool(name, size);
-  m_flows[poolId] = std::make_unique<Flows>(32000);
+
+  m_shards[poolId] = std::unique_ptr<Shards>(
+      Shards::fixedSize(0.0001, this->getCacheMemoryStats().ramCacheSize, 100));
   return poolId;
 }
 
 template <typename CacheTrait>
-bool CacheAllocator<CacheTrait>::put(PoolId id,
-                                     const std::string& key,
-                                     const std::string& value) {
-  auto handle = Super::allocate(id, key, value.size());
-  if (!handle) {
-    return false;
-  }
-  auto kkey = key;
-  m_flows[id]->write(kkey, value.size());
-  std::memcpy(handle->getMemory(), value.data(), value.size());
-  Super::insertOrReplace(handle);
-  return true;
+CacheAllocator<CacheTrait>::~CacheAllocator() {
+  m_stop.exchange(true);
+  m_keepAliveThread.join();
+  m_server->Shutdown();
+  m_serverThread.join();
 }
 
 template <typename CacheTrait>
-std::string CacheAllocator<CacheTrait>::get(PoolId id, const std::string& key) {
-  auto handle = Super::find(key);
-  if (!handle) {
-    return "";
+void CacheAllocator<CacheTrait>::registerAccess(PoolId id,
+                                                const std::string& key,
+                                                uint32_t& size,
+                                                bool reset) {
+  if (reset) {
+    m_shards[id]->erase(key);
   }
-  auto kkey = key;
-  m_flows[id]->read(kkey);
-  return std::string(reinterpret_cast<const char*>(handle->getMemory()),
-                     handle->getSize());
+  m_shards[id]->feed(key, size);
 }
 
 template class CacheAllocator<::facebook::cachelib::LruCacheTrait>;

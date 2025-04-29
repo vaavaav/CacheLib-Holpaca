@@ -13,36 +13,81 @@ endif()
 
 # Proto + gRPC
 get_filename_component(
-  holpaca_proto_file "${CMAKE_CURRENT_LIST_DIR}/protos/Holpaca.proto" ABSOLUTE)
-get_filename_component(holpaca_proto_path ${holpaca_proto_file} PATH)
+  HolpacaProtoFile "${CMAKE_CURRENT_LIST_DIR}/protos/Holpaca.proto" ABSOLUTE)
+get_filename_component(HolpacaProtoPath ${HolpacaProtoFile} PATH)
 
 # Generated sources
-set(holpaca_proto_srcs "${holpaca_proto_path}/Holpaca.pb.cc")
-set(holpaca_proto_hdrs "${holpaca_proto_path}/Holpaca.pb.h")
-set(holpaca_grpc_srcs "${holpaca_proto_path}/Holpaca.grpc.pb.cc")
-set(holpaca_grpc_hdrs "${holpaca_proto_path}/Holpaca.grpc.pb.h")
+set(HolpacaProtoSources "${HolpacaProtoPath}/Holpaca.pb.cc")
+set(HolpacaProtoHeaders "${HolpacaProtoPath}/Holpaca.pb.h")
+set(HolpacaGRPCSources "${HolpacaProtoPath}/Holpaca.grpc.pb.cc")
+set(HolpacaGRPCHeaders "${HolpacaProtoPath}/Holpaca.grpc.pb.h")
 
 add_custom_command(
-  OUTPUT ${holpaca_proto_srcs} ${holpaca_proto_hdrs} ${holpaca_grpc_srcs}
-         ${holpaca_grpc_hdrs}
+  OUTPUT 
+    ${HolpacaProtoHeaders} 
+    ${HolpacaProtoSources} 
+    ${HolpacaGRPCHeaders}
+    ${HolpacaGRPCSources}
   COMMAND
-    ${_PROTOBUF_PROTOC} ARGS --grpc_out "${holpaca_proto_path}" --cpp_out
-    "${holpaca_proto_path}" -I "${holpaca_proto_path}"
-    --plugin=protoc-gen-grpc="${_GRPC_CPP_PLUGIN_EXECUTABLE}"
-    "${holpaca_proto_file}"
-  DEPENDS "${holpaca_proto_file}")
+    ${_PROTOBUF_PROTOC} 
+    ARGS 
+      --grpc_out "${HolpacaProtoPath}" 
+      --cpp_out  "${HolpacaProtoPath}" 
+      -I "${HolpacaProtoPath}"
+      --plugin=protoc-gen-grpc="${_GRPC_CPP_PLUGIN_EXECUTABLE}"
+    "${HolpacaProtoFile}"
+  DEPENDS 
+   "${HolpacaProtoFile}"
+  COMMENT 
+   "Generating gRPC proto sources")
 
-add_library(cachelib_holpaca_proto ${holpaca_proto_hdrs} ${holpaca_grpc_hdrs}
-                                   ${holpaca_proto_srcs} ${holpaca_grpc_srcs})
+ add_library(cachelib_holpaca_proto 
+   ${HolpacaProtoHeaders}
+   ${HolpacaProtoSources} 
+   ${HolpacaGRPCHeaders} 
+   ${HolpacaGRPCSources}
+ )
 
-target_link_libraries(
-  cachelib_holpaca_proto PUBLIC ${_REFLECTION} ${_GRPC_GRPCPP}
-                                ${_PROTOBUF_LIBPROTOBUF})
+target_link_libraries(cachelib_holpaca_proto 
+  PUBLIC 
+  ${_REFLECTION} 
+  ${_GRPC_GRPCPP}
+  ${_PROTOBUF_LIBPROTOBUF})
 
-add_subdirectory(data-plane)
-add_subdirectory(control-plane)
+add_library(cachelib_holpaca_data
+  ./data-plane/CacheAllocator.h
+  ./data-plane/CacheAllocatorConfig.h
+  ./data-plane/CacheAllocator.cpp
+)
+
+target_link_libraries(cachelib_holpaca_data PUBLIC
+  cachelib_allocator
+  cachelib_holpaca_proto
+  Shards::Shards
+)
+
+add_executable(cachelib_holpaca_controller
+  ./control-plane/Main.cpp
+  ./control-plane/Controller.h
+  ./control-plane/Controller.cpp
+  ./control-plane/CacheProxy.h
+  ./control-plane/CacheProxy.cpp
+  ./control-plane/ProxyManager.h
+  ./control-plane/algorithms/ControlAlgorithm.h
+  ./control-plane/algorithms/HitRatioMaximization.h
+  ./control-plane/algorithms/HitRatioMaximization.cpp
+)
+
+target_link_libraries(cachelib_holpaca_controller PUBLIC
+  cachelib_holpaca_proto
+)
 
 install(
-  TARGETS cachelib_holpaca_proto
+  TARGETS cachelib_holpaca_controller
+  EXPORT cachelib-exports
+  DESTINATION ${BIN_INSTALL_DIR})
+
+install(
+  TARGETS cachelib_holpaca_proto cachelib_holpaca_data 
   EXPORT cachelib-exports
   DESTINATION ${LIB_INSTALL_DIR})

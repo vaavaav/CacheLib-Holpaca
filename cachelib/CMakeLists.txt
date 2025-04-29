@@ -101,7 +101,7 @@ find_package(Threads REQUIRED)
 
 find_package(Boost REQUIRED COMPONENTS system filesystem regex context
                                        program_options thread)
-find_package(Gflags CONFIG REQUIRED)
+find_package(gflags CONFIG REQUIRED)
 find_package(Glog CONFIG REQUIRED)
 find_package(GTest CONFIG REQUIRED)
 find_package(folly CONFIG REQUIRED)
@@ -111,7 +111,7 @@ find_package(wangle CONFIG REQUIRED)
 find_package(Zlib REQUIRED)
 find_package(Zstd REQUIRED)
 find_package(FBThrift REQUIRED) # must come after wangle
-find_package(flows CONFIG REQUIRED)
+find_package(Shards CONFIG REQUIRED)
 find_package(Protobuf CONFIG REQUIRED)
 find_package(gRPC CONFIG REQUIRED)
 
@@ -306,8 +306,8 @@ install(DIRECTORY ${CACHELIB_HOME}/cachebench/test_configs/
 add_library(cachelib INTERFACE)
 target_link_libraries(
   cachelib
-  INTERFACE cachelib_common cachelib_shm cachelib_navy cachelib_allocator
-            cachelib_holpaca_data cachelib_holpaca_control)
+  INTERFACE cachelib_common cachelib_shm cachelib_navy cachelib_allocator cachelib_holpaca_data)
+
 target_include_directories(
   cachelib INTERFACE $<INSTALL_INTERFACE:${INCLUDE_INSTALL_DIR}>)
 target_compile_features(cachelib_common INTERFACE cxx_std_17)
@@ -326,7 +326,6 @@ install(
 if(BUILD_SHARED_LIBS)
   set_target_properties(
     cachelib_holpaca_data
-    cachelib_holpaca_control
     cachelib_holpaca_proto
     cachelib_allocator
     cachelib_cachebench

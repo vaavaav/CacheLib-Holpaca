@@ -3,35 +3,35 @@ syntax = "proto3";
 package holpaca;
 
 service Stage {
-    rpc GetStatus(GetStatusRequest) returns (GetStatusResponse) {}
-    rpc Resize(ResizeRequest) returns (ResizeResponse) {}
+  rpc GetStatus(GetStatusRequest) returns (GetStatusResponse) {}
+  rpc Resize(ResizeRequest) returns (ResizeResponse) {}
 }
 
 service Controller {
-    rpc KeepAlive(KeepAliveRequest) returns (KeepAliveResponse) {}
+  rpc KeepAlive(KeepAliveRequest) returns (KeepAliveResponse) {}
 }
 
 message GetStatusRequest {}
 message GetStatusResponse {
-    message PoolStatus {
-        uint64 maxSize = 1;
-        uint64 usedSize = 2;
-        map<uint64, uint32> tailAccesses = 3;
-        map<uint64, float> mrc = 4;
-    };
-    map<int32, PoolStatus> pools = 1;
+  message PoolStatus {
+    uint64 maxSize = 1;
+    uint64 usedSize = 2;
+    map<uint64, uint32> tailAccesses = 3;
+    map<uint64, double> mrc = 4;
+  };
+  map<int32, PoolStatus> pools = 1;
 }
 
 message ResizeRequest {
-    map<int32, uint64> newSizes = 1;
+  map<int32, uint64> newSizes = 1;
 }
 
 message ResizeResponse {
-    int32 size = 1;
+  int32 size = 1;
 }
 
 message KeepAliveRequest {
-    string address = 1;
+  string address = 1;
 }
 
 message KeepAliveResponse {}

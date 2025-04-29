@@ -1,7 +1,5 @@
 #include "cachelib/holpaca/control-plane/CacheProxy.h"
 
-#include <string>
-
 namespace facebook {
 namespace cachelib {
 namespace holpaca {
@@ -16,11 +14,8 @@ void CacheProxy::keepAlive(std::chrono::nanoseconds timestamp) {
   m_lastKeepAlive = timestamp;
 }
 
-bool CacheProxy::isAlive() const {
-  return std::chrono::duration_cast<std::chrono::seconds>(
-             std::chrono::steady_clock::now().time_since_epoch() -
-             m_lastKeepAlive)
-             .count() < 5;
+bool CacheProxy::isAlive(std::chrono::nanoseconds now) const {
+  return (now - m_lastKeepAlive) < s_kKeepAliveTimeout;
 }
 
 void CacheProxy::resize(std::unordered_map<int32_t, uint64_t> newSizes) {

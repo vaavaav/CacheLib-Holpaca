@@ -7,15 +7,13 @@ namespace cachelib {
 namespace holpaca {
 
 template <typename CacheT>
-class CacheAllocatorConfig {
+class CacheAllocatorConfig
+    : public ::facebook::cachelib::CacheAllocatorConfig<
+          ::facebook::cachelib::CacheAllocator<typename CacheT::Trait>> {
   std::string m_address;
   std::string m_controllerAddress;
 
  public:
-  ::facebook::cachelib::CacheAllocatorConfig<
-      ::facebook::cachelib::CacheAllocator<typename CacheT::Trait>>
-      m_config;
-
   CacheAllocatorConfig& setAddress(std::string address) {
     m_address = address;
     return *this;
@@ -27,13 +25,16 @@ class CacheAllocatorConfig {
   }
 
   const CacheAllocatorConfig& validate() const {
-    m_config.validate();
     if (m_address.empty()) {
       throw std::invalid_argument("Address for this instance must be set");
     }
     if (m_controllerAddress.empty()) {
       throw std::invalid_argument("Controller address must be set");
     }
+
+    ::facebook::cachelib::CacheAllocatorConfig<
+        ::facebook::cachelib::CacheAllocator<typename CacheT::Trait>>::
+        validate();
 
     return *this;
   }

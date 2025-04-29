@@ -1,8 +1,8 @@
 #pragma once
 #include <grpcpp/server.h>
 
-#include <memory>
-#include <mutex>
+#include <atomic>
+#include <shared_mutex>
 #include <thread>
 #include <unordered_map>
 
@@ -13,15 +13,36 @@
 namespace facebook {
 namespace cachelib {
 namespace holpaca {
-class Controller {
-  std::vector<std::thread> m_controlAlgorithms;
+class Controller : public ::holpaca::Controller::Service, public ProxyManager {
+  grpc::Status KeepAlive(grpc::ServerContext* context,
+                         const ::holpaca::KeepAliveRequest* request,
+                         ::holpaca::KeepAliveResponse* response) override;
+
+  std::unordered_map<std::string, std::shared_ptr<CacheProxy>> getCaches()
+      override final;
+
   std::shared_ptr<grpc::Server> m_server;
   std::thread m_serverThread;
-  std::shared_ptr<ProxyManager> m_proxyManager;
+
+  std::vector<std::unique_ptr<ControlAlgorithm>> m_controlAlgorithms;
+
+  std::shared_timed_mutex m_mutex;
+  std::unordered_map<std::string, std::shared_ptr<CacheProxy>> m_proxies;
+  std::thread m_cleanerThread;
+  std::atomic_bool m_stop{false};
+  static constexpr std::chrono::nanoseconds s_kCleanerPeriodicity =
+      std::chrono::seconds(5);
 
  public:
-  Controller(ControllerConfig config);
+  Controller(std::string address);
   ~Controller();
+
+  template <typename T, typename... Args>
+  Controller& addAlgorithm(Args... args) {
+    m_controlAlgorithms.emplace_back(
+        std::make_unique<T>(dynamic_cast<ProxyManager*>(this), args...));
+    return *this;
+  }
 };
 } // namespace holpaca
 } // namespace cachelib

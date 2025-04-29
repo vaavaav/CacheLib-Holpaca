@@ -9,14 +9,10 @@ namespace cachelib {
 namespace holpaca {
 class ControlAlgorithm {
  protected:
-  std::shared_ptr<ProxyManager> m_proxyManager;
+  virtual void run() = 0;
 
  public:
-  ControlAlgorithm(std::shared_ptr<ProxyManager> proxyManager) {
-    m_proxyManager = proxyManager;
-  }
-  virtual void operator()() = 0;
-  virtual void stop() = 0;
+  ControlAlgorithm() {}
 };
 } // namespace holpaca
 } // namespace cachelib

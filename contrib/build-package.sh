@@ -61,7 +61,7 @@ NAME: the dependency to build supported values are:
   googlelog, googleflags, googletest,
   fmt, sparsemap,
   folly, fizz, wangle, fbthrift
-  grpc, flows 
+  grpc, Shards 
   cachelib
 
   "
@@ -132,7 +132,8 @@ case "$1" in
     SRCDIR=$REPODIR
     external_git_clone=yes
     external_git_tag="v2.2.2"
-    cmake_custom_params="-DGFLAGS_BUILD_SHARED_LIBS=YES -DCMAKE_INSTALL_RPATH='$PREFIX/lib;$PREFIX/lib64'"
+    cmake_custom_params="-DGFLAGS_BUILD_SHARED_LIBS=YES"
+    debug_build=
     if test "$build_tests" = "yes" ; then
         cmake_custom_params="$cmake_custom_params -DGFLAGS_BUILD_TESTING=YES"
     else
@@ -182,10 +183,11 @@ case "$1" in
     # CMake >= 3.18, later reverted. While waiting for v1.5.5,
     # pin to the fix: https://github.com/facebook/zstd/pull/3510
     external_git_tag=8420502e
+    cmake_custom_params="-DBUILD_SHARED_LIBS=ON"
     if test "$build_tests" = "yes" ; then
-        cmake_custom_params="-DZSTD_BUILD_TESTS=ON"
+        cmake_custom_params="$cmake_custom_params -DZSTD_BUILD_TESTS=ON"
     else
-        cmake_custom_params="-DZSTD_BUILD_TESTS=OFF"
+        cmake_custom_params="$cmake_custom_params -DZSTD_BUILD_TESTS=OFF"
     fi
     ;;
 
@@ -195,6 +197,7 @@ case "$1" in
     REPODIR=cachelib/external/$NAME
     SRCDIR=$REPODIR
     external_git_clone=yes
+    cmake_custom_params="-DBUILD_SHARED_LIBS=ON"
     ;;
 
   folly)
@@ -248,21 +251,23 @@ case "$1" in
     external_git_clone=yes
     external_git_tag="v1.50.1"
     git_clone_flags="-b $external_git_tag --depth 1 --recurse-submodules --shallow-submodules"
-    cmake_custom_params="-DBUILD_SHARED_LIBS=ON -DgRPC_INSTALL=ON -DgRPC_BUILD_TESTS=OFF -DgRPC_ZLIB_PROVIDER=package -DgRPC_SSL_PROVIDER=package -DABSL_PROPAGATE_CXX_STD=ON"
+    cmake_custom_params="-DBUILD_SHARED_LIBS=ON -DgRPC_INSTALL=ON -DgRPC_BUILD_TESTS=OFF -DgRPC_ZLIB_PROVIDER=package -DgRPC_SSL_PROVIDER=package -DABSL_PROPAGATE_CXX_STD=ON -Dprotobuf_WITH_ZLIB=ON -DCMAKE_BUILD_WITH_INSTALL_RPATH=FALSE"
     ;;
 
-  flows)
-    NAME=flows
-    REPO=https://gitfront.io/r/vaavaav/davMvwJ8jxJv/flows-cpp.git
+  Shards)
+    NAME=Shards
+    REPO=https://github.com/vaavaav/SHARDS-cpp.git
+    git_clone_flags="-b varying-size"
     REPODIR=cachelib/external/$NAME
     SRCDIR=$REPODIR
     external_git_clone=yes
+    cmake_custom_params="-DBUILD_SHARED_LIBS=ON"
     ;;
 
   cachelib)
     NAME=cachelib
     SRCDIR=cachelib
-    cmake_custom_params="-DCMAKE_FIND_DEBUG_MODE=ON"
+    cmake_custom_params="-DCMAKE_FIND_DEBUG_MODE=ON -DBUILD_SHARED_LIBS=ON"
     if test "$build_tests" = "yes" ; then
         cmake_custom_params="$cmake_custom_params -DBUILD_TESTS=ON"
     else
@@ -286,7 +291,7 @@ test "$debug_build" \
 MAKE_PARAMS=
 test "$verbose" && MAKE_PARAMS="$MAKE_PARAMS VERBOSE=YES"
 
-JOBS=$(nproc --ignore 1)
+JOBS=$(nproc --ignore 2)
 test "$many_jobs" && MAKE_PARAMS="$MAKE_PARAMS -j$JOBS"
 
 
