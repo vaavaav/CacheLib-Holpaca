@@ -70,6 +70,18 @@ Controller::getCaches() {
   return caches;
 }
 
+// TODO: confirmar que isto é o comportamento correto
+std::shared_ptr<CacheProxy> Controller::getCache(const std::string& address) {
+  std::shared_lock<std::shared_timed_mutex> lock(m_mutex);
+  auto now = std::chrono::steady_clock::now().time_since_epoch();
+  if (auto it = m_proxies.find(address); it != m_proxies.end()) {
+    if (it->second->isAlive(now)) {
+      return it->second;
+    }
+  }
+  return nullptr;
+}
+
 } // namespace holpaca
 } // namespace cachelib
 } // namespace facebook

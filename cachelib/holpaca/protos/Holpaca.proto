@@ -20,6 +20,8 @@ message GetStatusResponse {
     map<uint64, double> mrc = 4;
   };
   map<int32, PoolStatus> pools = 1;
+  uint64 maxSize = 2;
+  uint64 usedSize = 3;
 }
 
 message ResizeRequest {

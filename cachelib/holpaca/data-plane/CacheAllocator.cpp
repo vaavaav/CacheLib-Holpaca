@@ -11,10 +11,11 @@ grpc::Status CacheAllocator<CacheTrait>::GetStatus(
     grpc::ServerContext* context,
     const ::holpaca::GetStatusRequest* request,
     ::holpaca::GetStatusResponse* response) {
+  response->set_maxsize(this->getCacheMemoryStats().ramCacheSize);
+  response->set_usedsize(this->getCacheMemoryStats().ramCacheSize -
+                         this->getCacheMemoryStats().unReservedSize);
   auto pools = response->mutable_pools();
-  auto pidsExceptGhost = this->getPoolIds();
-  pidsExceptGhost.erase(kGhostPoolId);
-  for (const auto pid : pidsExceptGhost) {
+  for (const auto pid : this->getPoolIds()) {
     auto stats = this->getPoolStats(pid);
     ::holpaca::GetStatusResponse::PoolStatus s;
     s.set_maxsize(stats.poolSize);
@@ -31,7 +32,7 @@ grpc::Status CacheAllocator<CacheTrait>::GetStatus(
 
   return grpc::Status::OK;
 }
-// TODO: steal space from the ghost pool (and give it back if needed)
+
 template <typename CacheTrait>
 grpc::Status CacheAllocator<CacheTrait>::Resize(
     grpc::ServerContext* context,
@@ -66,11 +67,9 @@ grpc::Status CacheAllocator<CacheTrait>::Resize(
 
 template <typename CacheTrait>
 CacheAllocator<CacheTrait>::CacheAllocator(Config& config)
-    : ::facebook::cachelib::CacheAllocator<CacheTrait>(config), // deliberate
-                                                                // slicing
-      kGhostPoolId(Super::addPool("ghost",
-                                  Super::getCacheMemoryStats().ramCacheSize *
-                                      s_kGhostPoolRelativeSize)) {
+    : ::facebook::cachelib::CacheAllocator<CacheTrait>(config) // deliberate
+                                                               // slicing
+{
   m_server =
       grpc::ServerBuilder()
           .AddListeningPort(config.m_address, grpc::InsecureServerCredentials())

@@ -16,10 +16,16 @@ namespace cachelib {
 namespace holpaca {
 
 struct PoolStatus {
-  uint64_t maxSize;
-  uint64_t usedSize;
-  std::map<uint64_t, uint32_t> tailAccesses;
-  std::map<uint64_t, float> mrc;
+  uint64_t m_maxSize{0};
+  uint64_t m_usedSize{0};
+  std::map<uint64_t, uint32_t> m_tailAccesses{};
+  std::map<uint64_t, float> m_MRC{};
+};
+
+struct CacheStatus {
+  uint64_t m_maxSize{0};
+  uint64_t m_usedSize{0};
+  std::unordered_map<uint32_t, PoolStatus> m_pools{};
 };
 
 class CacheProxy {
@@ -27,6 +33,11 @@ class CacheProxy {
   std::chrono::nanoseconds m_lastKeepAlive;
   static constexpr std::chrono::nanoseconds s_kKeepAliveTimeout =
       std::chrono::seconds(3);
+  std::chrono::nanoseconds m_lastUpdate;
+  static constexpr std::chrono::nanoseconds s_kUpdateValidity =
+      std::chrono::seconds(1);
+
+  CacheStatus m_status;
 
  public:
   CacheProxy(const std::string& address, std::chrono::nanoseconds timestamp);
@@ -34,7 +45,7 @@ class CacheProxy {
   bool isAlive(std::chrono::nanoseconds now) const;
 
   void resize(std::unordered_map<int32_t, uint64_t> newSizes);
-  std::unordered_map<int32_t, PoolStatus> getStatus();
+  CacheStatus& getStatus();
 };
 } // namespace holpaca
 } // namespace cachelib

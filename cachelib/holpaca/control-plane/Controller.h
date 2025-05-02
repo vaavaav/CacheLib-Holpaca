@@ -20,6 +20,8 @@ class Controller : public ::holpaca::Controller::Service, public ProxyManager {
 
   std::unordered_map<std::string, std::shared_ptr<CacheProxy>> getCaches()
       override final;
+  std::shared_ptr<CacheProxy> getCache(
+      const std::string& address) override final;
 
   std::shared_ptr<grpc::Server> m_server;
   std::thread m_serverThread;

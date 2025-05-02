@@ -31,28 +31,50 @@ void CacheProxy::resize(std::unordered_map<int32_t, uint64_t> newSizes) {
   m_stub->Resize(&context, request, &response);
 }
 
-std::unordered_map<int32_t, PoolStatus> CacheProxy::getStatus() {
-  ::grpc::ClientContext context;
-  ::holpaca::GetStatusRequest request;
-  ::holpaca::GetStatusResponse response;
+CacheStatus& CacheProxy::getStatus() {
+  if (std::chrono::steady_clock::now().time_since_epoch() - m_lastUpdate >
+      s_kUpdateValidity) {
+    ::grpc::ClientContext context;
+    ::holpaca::GetStatusRequest request;
+    ::holpaca::GetStatusResponse response;
 
-  auto status = m_stub->GetStatus(&context, request, &response);
-  std::unordered_map<int32_t, PoolStatus> poolStatus;
+    auto status = m_stub->GetStatus(&context, request, &response);
+    std::unordered_map<uint32_t, PoolStatus> poolStatus;
 
-  for (const auto& [poolId, pool] : response.pools()) {
-    PoolStatus s;
-    s.maxSize = pool.maxsize();
-    s.usedSize = pool.usedsize();
-    for (const auto& [cid, tailAccesses] : pool.tailaccesses()) {
-      s.tailAccesses[cid] = tailAccesses;
+    for (const auto& [poolId, pool] : response.pools()) {
+      poolStatus.emplace(poolId,
+                         PoolStatus{
+                             .m_maxSize = pool.maxsize(),
+                             .m_usedSize = pool.usedsize(),
+                             .m_tailAccesses = {pool.tailaccesses().begin(),
+                                                pool.tailaccesses().end()},
+                             .m_MRC = {pool.mrc().begin(), pool.mrc().end()},
+                         });
     }
-    for (const auto& [cid, mrc] : pool.mrc()) {
-      s.mrc[cid] = mrc;
-    }
-    poolStatus[poolId] = std::move(s);
+
+    m_status = CacheStatus{
+        .m_maxSize = response.maxsize(),
+        .m_usedSize = response.usedsize(),
+        .m_pools = std::move(poolStatus),
+    };
+
+    m_status = CacheStatus{
+        .m_maxSize = 2000000,
+        .m_usedSize = 1000000,
+        .m_pools = {
+            {1,
+             PoolStatus{.m_maxSize = 500000,
+                        .m_usedSize = 0,
+                        .m_tailAccesses = {},
+                        .m_MRC = {{0.0, 1.0}, {100000, 0.5}, {200000, 0.0}}}},
+            {2,
+             PoolStatus{.m_maxSize = 500000,
+                        .m_usedSize = 0,
+                        .m_tailAccesses = {},
+                        .m_MRC = {{0.0, 1.0}, {50000, 0.25}, {200000, 0.0}}}},
+        }};
   }
-
-  return poolStatus;
+  return m_status;
 }
 
 } // namespace holpaca

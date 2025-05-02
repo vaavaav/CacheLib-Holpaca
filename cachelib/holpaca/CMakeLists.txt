@@ -73,13 +73,18 @@ add_executable(cachelib_holpaca_controller
   ./control-plane/CacheProxy.h
   ./control-plane/CacheProxy.cpp
   ./control-plane/ProxyManager.h
+  ./control-plane/algorithms/Optimizable.h
+  ./control-plane/algorithms/Optimizable.cpp
   ./control-plane/algorithms/ControlAlgorithm.h
   ./control-plane/algorithms/HitRatioMaximization.h
   ./control-plane/algorithms/HitRatioMaximization.cpp
 )
 
+find_package(GSL REQUIRED)
+
 target_link_libraries(cachelib_holpaca_controller PUBLIC
   cachelib_holpaca_proto
+  GSL::gsl
 )
 
 install(

@@ -31,9 +31,6 @@ class CacheAllocator : public ::facebook::cachelib::CacheAllocator<CacheTrait>,
                       const ::holpaca::ResizeRequest* request,
                       ::holpaca::ResizeResponse* response) override final;
 
-  PoolId const kGhostPoolId;
-  static constexpr double s_kGhostPoolRelativeSize = 1 / 10;
-
  public:
   using Config = CacheAllocatorConfig<CacheAllocator<CacheTrait>>;
   using Trait = CacheTrait;
