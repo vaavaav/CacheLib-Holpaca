@@ -1,5 +1,4 @@
 #pragma once
-#include <cachelib/holpaca/control-plane/ControllerConfig.h>
 #include <cachelib/holpaca/control-plane/ProxyManager.h>
 #include <cachelib/holpaca/control-plane/algorithms/ControlAlgorithm.h>
 #include <grpcpp/server.h>
