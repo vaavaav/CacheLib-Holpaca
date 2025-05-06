@@ -1,14 +1,15 @@
 #pragma once
-#include <Shards/Shards.h>
+#include <cachelib/allocator/CacheAllocator.h>
+#include <cachelib/holpaca/data-plane/CacheAllocatorConfig.h>
+#include <cachelib/holpaca/data-plane/Metrics.h>
+#include <cachelib/holpaca/protos/Holpaca.grpc.pb.h>
+#include <cachelib/holpaca/protos/Holpaca.pb.h>
 #include <grpc/grpc.h>
 #include <grpcpp/server.h>
 #include <grpcpp/server_builder.h>
 #include <grpcpp/server_context.h>
 
-#include "../protos/Holpaca.grpc.pb.h"
-#include "../protos/Holpaca.pb.h"
-#include "cachelib/allocator/CacheAllocator.h"
-#include "cachelib/holpaca/data-plane/CacheAllocatorConfig.h"
+#include <shared_mutex>
 
 namespace facebook {
 namespace cachelib {
@@ -18,7 +19,8 @@ class CacheAllocator : public ::facebook::cachelib::CacheAllocator<CacheTrait>,
                        ::holpaca::Stage::Service {
   using Super = ::facebook::cachelib::CacheAllocator<CacheTrait>;
   std::shared_ptr<::holpaca::Stage::Service> m_stage;
-  std::unordered_map<int32_t, std::shared_ptr<Shards>> m_shards;
+  std::unordered_map<PoolId, Metrics> m_metrics;
+  std::shared_timed_mutex m_metricsMutex;
   std::thread m_serverThread;
   std::shared_ptr<grpc::Server> m_server;
   std::thread m_keepAliveThread;
@@ -46,7 +48,10 @@ class CacheAllocator : public ::facebook::cachelib::CacheAllocator<CacheTrait>,
   void registerAccess(PoolId id,
                       const std::string& key,
                       uint32_t& size,
+                      bool isLookup,
+                      bool isMiss,
                       bool reset = false);
+  void registerMetrics(PoolId id, const uint32_t diskIOPS);
 };
 
 using LruAllocator = CacheAllocator<LruCacheTrait>;

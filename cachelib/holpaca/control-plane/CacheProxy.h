@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cachelib/holpaca/protos/Holpaca.grpc.pb.h>
+#include <cachelib/holpaca/protos/Holpaca.pb.h>
 #include <grpc/grpc.h>
 #include <grpcpp/create_channel.h>
 #include <grpcpp/server.h>
@@ -8,9 +10,6 @@
 
 #include <chrono>
 
-#include "cachelib/holpaca/protos/Holpaca.grpc.pb.h"
-#include "cachelib/holpaca/protos/Holpaca.pb.h"
-
 namespace facebook {
 namespace cachelib {
 namespace holpaca {
@@ -18,6 +17,10 @@ namespace holpaca {
 struct PoolStatus {
   uint64_t m_maxSize{0};
   uint64_t m_usedSize{0};
+  uint32_t m_diskIOPS{0};
+  uint32_t m_lookups{0};
+  uint32_t m_misses{0};
+  uint32_t m_evictions{0};
   std::map<uint64_t, uint32_t> m_tailAccesses{};
   std::map<uint64_t, float> m_MRC{};
 };

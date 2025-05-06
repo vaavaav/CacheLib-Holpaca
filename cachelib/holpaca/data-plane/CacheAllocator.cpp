@@ -1,5 +1,4 @@
-#include "CacheAllocator.h"
-
+#include <cachelib/holpaca/data-plane/CacheAllocator.h>
 #include <grpcpp/create_channel.h>
 
 namespace facebook {
@@ -17,15 +16,24 @@ grpc::Status CacheAllocator<CacheTrait>::GetStatus(
   auto pools = response->mutable_pools();
   for (const auto pid : this->getPoolIds()) {
     auto stats = this->getPoolStats(pid);
+    Metrics metrics;
+    {
+      std::shared_lock<std::shared_timed_mutex> lock(m_metricsMutex);
+      metrics = m_metrics[pid];
+    }
     ::holpaca::GetStatusResponse::PoolStatus s;
     s.set_maxsize(stats.poolSize);
     s.set_usedsize(stats.poolUsableSize + stats.poolAdvisedSize);
+    s.set_diskiops(metrics.m_diskIOPS);
+    s.set_lookups(metrics.m_lookups);
+    s.set_misses(metrics.m_misses);
+    s.set_evictions(stats.numEvictions());
     for (auto const& [cid, cs] : stats.cacheStats) {
       s.mutable_tailaccesses()->insert(
           {static_cast<uint32_t>(cid),
            static_cast<uint32_t>(cs.containerStat.numTailAccesses)});
     }
-    auto mrc = m_shards[pid]->mrc();
+    auto mrc = metrics.m_shards->mrc();
     s.mutable_mrc()->insert(mrc.begin(), mrc.end());
     pools->insert({pid, s});
   }
@@ -54,12 +62,12 @@ grpc::Status CacheAllocator<CacheTrait>::Resize(
   for (auto [poolId, relSize] : sortedRelSizes) {
     if (relSize < 0) {
       // downsizing
-      this->shrinkPool(static_cast<::facebook::cachelib::PoolId>(poolId),
-                       -relSize);
+      Super::shrinkPool(static_cast<::facebook::cachelib::PoolId>(poolId),
+                        -relSize);
     } else {
       // upsizing
-      this->growPool(static_cast<::facebook::cachelib::PoolId>(poolId),
-                     relSize);
+      Super::growPool(static_cast<::facebook::cachelib::PoolId>(poolId),
+                      relSize);
     }
   }
   return grpc::Status::OK;
@@ -94,8 +102,12 @@ template <typename CacheTrait>
 PoolId CacheAllocator<CacheTrait>::addPool(std::string name, size_t size) {
   auto poolId = Super::addPool(name, size);
 
-  m_shards[poolId] = std::unique_ptr<Shards>(
-      Shards::fixedSize(0.0001, this->getCacheMemoryStats().ramCacheSize, 100));
+  {
+    std::unique_lock<std::shared_timed_mutex> lock(m_metricsMutex);
+    m_metrics[poolId].m_shards = std::unique_ptr<Shards>(Shards::fixedSize(
+        0.0001, this->getCacheMemoryStats().ramCacheSize, 100));
+  }
+
   return poolId;
 }
 
@@ -111,11 +123,27 @@ template <typename CacheTrait>
 void CacheAllocator<CacheTrait>::registerAccess(PoolId id,
                                                 const std::string& key,
                                                 uint32_t& size,
+                                                bool isLookup,
+                                                bool isMiss,
                                                 bool reset) {
-  if (reset) {
-    m_shards[id]->erase(key);
+  std::unique_lock<std::shared_timed_mutex> lock(m_metricsMutex);
+  if (isLookup) {
+    m_metrics[id].m_lookups++;
+    if (isMiss) {
+      m_metrics[id].m_misses++;
+    }
   }
-  m_shards[id]->feed(key, size);
+  if (reset) {
+    m_metrics[id].m_shards->erase(key);
+  }
+  m_metrics[id].m_shards->feed(key, size);
+}
+
+template <typename CacheTrait>
+void CacheAllocator<CacheTrait>::registerMetrics(PoolId id,
+                                                 const uint32_t diskIOPS) {
+  std::unique_lock<std::shared_timed_mutex> lock(m_metricsMutex);
+  m_metrics[id].m_diskIOPS = diskIOPS;
 }
 
 template class CacheAllocator<::facebook::cachelib::LruCacheTrait>;

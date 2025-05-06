@@ -74,10 +74,11 @@ add_executable(cachelib_holpaca_controller
   ./control-plane/CacheProxy.cpp
   ./control-plane/ProxyManager.h
   ./control-plane/algorithms/Optimizable.h
-  ./control-plane/algorithms/Optimizable.cpp
   ./control-plane/algorithms/ControlAlgorithm.h
-  ./control-plane/algorithms/HitRatioMaximization.h
-  ./control-plane/algorithms/HitRatioMaximization.cpp
+  ./control-plane/algorithms/PerformanceMaximization.h
+  ./control-plane/algorithms/PerformanceMaximization.cpp
+  ./control-plane/algorithms/MarginalHits.h
+  ./control-plane/algorithms/MarginalHits.cpp
 )
 
 find_package(GSL REQUIRED)

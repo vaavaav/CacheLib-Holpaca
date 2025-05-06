@@ -18,6 +18,10 @@ message GetStatusResponse {
     uint64 usedSize = 2;
     map<uint64, uint32> tailAccesses = 3;
     map<uint64, double> mrc = 4;
+    uint32 diskIOPS = 5;
+    uint32 lookups = 7;
+    uint32 misses = 8;
+    uint32 evictions = 9;
   };
   map<int32, PoolStatus> pools = 1;
   uint64 maxSize = 2;

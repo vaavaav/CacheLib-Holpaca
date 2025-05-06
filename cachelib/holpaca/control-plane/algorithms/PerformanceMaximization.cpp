@@ -1,67 +1,54 @@
-#include "HitRatioMaximization.h"
+#include <cachelib/holpaca/control-plane/algorithms/PerformanceMaximization.h>
+
+#include <numeric>
 
 namespace facebook {
 namespace cachelib {
 namespace holpaca {
 
-HitRatioMaximization::HitRatioMaximization(
+PerformanceMaximization::PerformanceMaximization(
     ProxyManager* const kProxyManager,
     std::chrono::milliseconds const kPeriodicity,
+    MetricType const kMetricType,
     double const kDelta,
-    const std::unordered_map<std::string, double>& kHitRatioQoS)
-    : Optimizable({.m_kMaxTries = 2000,
-                   .m_kIterationsPerTemperature = 250,
-                   .m_kInitialTemperature = 90,
-                   .m_kMinTemperature = 0.1,
-                   .m_kCoolingRate = 1.003}),
-      m_kProxyManager(kProxyManager),
-      m_kPeriodicity(kPeriodicity),
+    const std::unordered_map<std::string, double>& kQoS)
+    : ControlAlgorithm(kProxyManager, kPeriodicity),
       m_kDelta(kDelta),
-      m_kHitRatioQoS(kHitRatioQoS) {
-  m_thread = std::thread([this] {
-    while (!m_stop) {
-      std::cout << "Collecting..." << std::endl; // DEBUG
-      collect();
-      std::cout << "Checking if we can skip..." << std::endl; // DEBUG
-      if (!skip()) {
-        std::cout << "Running optimization..." << std::endl; // DEBUG
-        run();
-        std::cout << "Enforcing..." << std::endl; // DEBUG
-        enforce();
-      }
-      std::cout << "Sleeping..." << std::endl; // DEBUG
-      std::this_thread::sleep_for(m_kPeriodicity);
-    }
-  });
-}
+      m_kMetricType(kMetricType),
+      m_kQoS(kQoS) {}
 
-HitRatioMaximization::~HitRatioMaximization() {
-  m_stop = true;
-  if (m_thread.joinable()) {
-    m_thread.join();
-  }
-}
-
-void HitRatioMaximization::collect() {
-  m_cacheConfigs.clear();
-  for (const auto& [address, proxy] : m_kProxyManager->getCaches()) {
-    std::cout << "Collecting from " << address << std::endl; // DEBUG
-    auto status = proxy->getStatus();
+void PerformanceMaximization::loop(
+    std::unordered_map<std::string, CacheStatus>& cacheStatus) {
+  // collect
+  Context context;
+  for (const auto& [address, status] : cacheStatus) {
     std::vector<PoolConfig> poolConfigs;
     for (const auto& [poolId, poolStatus] : status.m_pools) {
       if (poolStatus.m_MRC.size() >= m_kMRCMinLength) {
         std::vector<double> cacheSizes;
-        std::vector<double> missRatios;
+        std::vector<double> metrics;
         for (const auto& [size, missRatio] : poolStatus.m_MRC) {
           cacheSizes.emplace_back(size);
-          missRatios.emplace_back(missRatio);
+          metrics.emplace_back(missRatio);
+        }
+        auto incorrectUtilityCurve =
+            tk::spline(cacheSizes, metrics, tk::spline::cspline, true);
+        double const correction_factor =
+            (static_cast<double>(poolStatus.m_misses) / poolStatus.m_lookups) -
+            incorrectUtilityCurve(poolStatus.m_usedSize);
+        for (auto& missRatio : metrics) {
+          missRatio += correction_factor;
+          if (m_kMetricType == MetricType::kThroughput) {
+            missRatio = (poolStatus.m_diskIOPS > 0) *
+                        (missRatio / poolStatus.m_diskIOPS);
+          }
         }
         poolConfigs.emplace_back(PoolConfig{
             .m_kId = poolId,
             .m_optimalSize = poolStatus.m_maxSize,
             .m_kCurrentSize = poolStatus.m_maxSize,
-            .m_MRC =
-                tk::spline(cacheSizes, missRatios, tk::spline::cspline, true),
+            .m_utilityCurve =
+                tk::spline(cacheSizes, metrics, tk::spline::cspline, true),
             .m_kLowerBound =
                 static_cast<uint64_t>((1 - m_kDelta) * poolStatus.m_maxSize),
             .m_kUpperBound =
@@ -70,7 +57,7 @@ void HitRatioMaximization::collect() {
       }
     }
     if (!poolConfigs.empty()) {
-      m_cacheConfigs.emplace_back(CacheConfig{
+      context.m_cacheConfigs.emplace_back(CacheConfig{
           .m_kName = address,
           .m_kCurrentSize = status.m_maxSize,
           .m_kMaxSize = status.m_usedSize,
@@ -79,43 +66,48 @@ void HitRatioMaximization::collect() {
       });
     }
   }
-}
 
-void HitRatioMaximization::enforce() {
-  // print
-  for (const auto& cacheConfig : m_cacheConfigs) {
+  // compute
+  context.run(2000, 250, 90, 0.1, 1.003);
+
+  // enforce
+  for (const auto& cacheConfig : context.m_cacheConfigs) {
+    std::cout << "Cache " << cacheConfig.m_kName << ": "
+              << cacheConfig.m_kCurrentSize << " -> "
+              << cacheConfig.m_optimalSize << std::endl;
     std::unordered_map<int32_t, uint64_t> newSizes;
     for (const auto& poolConfig : cacheConfig.m_poolConfigs) {
-      std::cout << "Pool " << poolConfig.m_kId << ": "
+      std::cout << "  |-- Pool " << poolConfig.m_kId << ": "
                 << poolConfig.m_kCurrentSize << " -> "
                 << poolConfig.m_optimalSize << std::endl;
+      newSizes[poolConfig.m_kId] = poolConfig.m_optimalSize;
     }
+    m_kProxyManager->getCache(cacheConfig.m_kName)->resize(newSizes);
   }
 }
 
-bool HitRatioMaximization::skip() {
-  int active = 0;
-  for (const auto& cacheConfig : m_cacheConfigs) {
-    active += cacheConfig.m_poolConfigs.size();
-  }
-  return active < 2;
+bool PerformanceMaximization::Context::skip() const {
+  return std::accumulate(m_cacheConfigs.begin(), m_cacheConfigs.end(), 0,
+                         [](int acc, const CacheConfig& cacheConfig) {
+                           return acc + cacheConfig.m_poolConfigs.size();
+                         }) <= 1;
 }
 
-void HitRatioMaximization::step() {
+void PerformanceMaximization::Context::step() {
   // 1: giver, 2: receiver
   // Get two caches (may be the same)
-  int const cacheIdx1 = getRandomUniformInt(m_cacheConfigs.size());
-  int const cacheIdx2 = getRandomUniformInt(m_cacheConfigs.size());
+  int const cacheIdx1 = randomUniformInt(m_cacheConfigs.size());
+  int const cacheIdx2 = randomUniformInt(m_cacheConfigs.size());
   // Get a pool from each cache (can't be the same)
   int const poolIdx1 =
-      getRandomUniformInt(m_cacheConfigs[cacheIdx1].m_poolConfigs.size());
+      randomUniformInt(m_cacheConfigs[cacheIdx1].m_poolConfigs.size());
   int const poolIdx2 =
       cacheIdx1 == cacheIdx2
           ? (poolIdx1 + 1 +
-             getRandomUniformInt(
-                 m_cacheConfigs[cacheIdx1].m_poolConfigs.size() - 1)) %
+             randomUniformInt(m_cacheConfigs[cacheIdx1].m_poolConfigs.size() -
+                              1)) %
                 m_cacheConfigs[cacheIdx1].m_poolConfigs.size()
-          : getRandomUniformInt(m_cacheConfigs[cacheIdx2].m_poolConfigs.size());
+          : randomUniformInt(m_cacheConfigs[cacheIdx2].m_poolConfigs.size());
   //
   // Get the two caches and pools
   auto& cache1 = m_cacheConfigs[cacheIdx1];
@@ -132,7 +124,7 @@ void HitRatioMaximization::step() {
                                       ? cache2.m_kMaxSize - cache2.m_optimalSize
                                       : cache1.m_optimalSize});
 
-  int const kDelta = getRandomUniformInt(kMaxDelta);
+  int const kDelta = randomUniformInt(kMaxDelta);
   // Update the optimal size of the pools
   pool1.m_optimalSize -= kDelta;
   pool2.m_optimalSize += kDelta;
@@ -144,7 +136,7 @@ void HitRatioMaximization::step() {
   }
 }
 
-double HitRatioMaximization::energy() const {
+double PerformanceMaximization::Context::energy() const {
   auto result = std::accumulate(
       m_cacheConfigs.begin(), m_cacheConfigs.end(), 0.0,
       [](double acc, const CacheConfig& cacheConfig) {
@@ -152,13 +144,14 @@ double HitRatioMaximization::energy() const {
                std::accumulate(cacheConfig.m_poolConfigs.begin(),
                                cacheConfig.m_poolConfigs.end(), 0.0,
                                [](double acc, const PoolConfig& poolConfig) {
-                                 return acc + poolConfig.getMissRatio();
+                                 return acc + poolConfig.getMetric();
                                });
       });
   return result;
 }
 
-double HitRatioMaximization::distance(Optimizable const* other) const {
+double PerformanceMaximization::Context::distance(
+    Optimizable const* other) const {
   return fabs(energy() - other->energy());
 }
 

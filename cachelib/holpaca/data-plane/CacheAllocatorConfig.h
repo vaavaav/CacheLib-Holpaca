@@ -1,6 +1,6 @@
 #pragma once
 
-#include "cachelib/allocator/CacheAllocatorConfig.h"
+#include <cachelib/allocator/CacheAllocatorConfig.h>
 
 namespace facebook {
 namespace cachelib {

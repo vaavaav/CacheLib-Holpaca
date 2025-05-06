@@ -1,14 +1,13 @@
 #pragma once
+#include <cachelib/holpaca/control-plane/ControllerConfig.h>
+#include <cachelib/holpaca/control-plane/ProxyManager.h>
+#include <cachelib/holpaca/control-plane/algorithms/ControlAlgorithm.h>
 #include <grpcpp/server.h>
 
 #include <atomic>
 #include <shared_mutex>
 #include <thread>
 #include <unordered_map>
-
-#include "cachelib/holpaca/control-plane/ControllerConfig.h"
-#include "cachelib/holpaca/control-plane/ProxyManager.h"
-#include "cachelib/holpaca/control-plane/algorithms/ControlAlgorithm.h"
 
 namespace facebook {
 namespace cachelib {
@@ -41,8 +40,7 @@ class Controller : public ::holpaca::Controller::Service, public ProxyManager {
 
   template <typename T, typename... Args>
   Controller& addAlgorithm(Args... args) {
-    m_controlAlgorithms.emplace_back(
-        std::make_unique<T>(dynamic_cast<ProxyManager*>(this), args...));
+    m_controlAlgorithms.emplace_back(std::make_unique<T>(this, args...));
     return *this;
   }
 };

@@ -1,4 +1,4 @@
-#include "cachelib/holpaca/control-plane/CacheProxy.h"
+#include <cachelib/holpaca/control-plane/CacheProxy.h>
 
 namespace facebook {
 namespace cachelib {
@@ -46,6 +46,10 @@ CacheStatus& CacheProxy::getStatus() {
                          PoolStatus{
                              .m_maxSize = pool.maxsize(),
                              .m_usedSize = pool.usedsize(),
+                             .m_diskIOPS = pool.diskiops(),
+                             .m_lookups = pool.lookups(),
+                             .m_misses = pool.misses(),
+                             .m_evictions = pool.evictions(),
                              .m_tailAccesses = {pool.tailaccesses().begin(),
                                                 pool.tailaccesses().end()},
                              .m_MRC = {pool.mrc().begin(), pool.mrc().end()},
@@ -57,22 +61,6 @@ CacheStatus& CacheProxy::getStatus() {
         .m_usedSize = response.usedsize(),
         .m_pools = std::move(poolStatus),
     };
-
-    m_status = CacheStatus{
-        .m_maxSize = 2000000,
-        .m_usedSize = 1000000,
-        .m_pools = {
-            {1,
-             PoolStatus{.m_maxSize = 500000,
-                        .m_usedSize = 0,
-                        .m_tailAccesses = {},
-                        .m_MRC = {{0.0, 1.0}, {100000, 0.5}, {200000, 0.0}}}},
-            {2,
-             PoolStatus{.m_maxSize = 500000,
-                        .m_usedSize = 0,
-                        .m_tailAccesses = {},
-                        .m_MRC = {{0.0, 1.0}, {50000, 0.25}, {200000, 0.0}}}},
-        }};
   }
   return m_status;
 }

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "CacheProxy.h"
+#include <cachelib/holpaca/control-plane/CacheProxy.h>
 
 namespace facebook {
 namespace cachelib {
