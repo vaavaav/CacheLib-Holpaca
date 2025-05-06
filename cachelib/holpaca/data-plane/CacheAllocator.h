@@ -22,7 +22,7 @@ class CacheAllocator : public ::facebook::cachelib::CacheAllocator<CacheTrait>,
   std::unordered_map<PoolId, Metrics> m_metrics;
   std::shared_timed_mutex m_metricsMutex;
   std::thread m_serverThread;
-  std::shared_ptr<grpc::Server> m_server;
+  std::shared_ptr<grpc::Server> m_server{nullptr};
   std::thread m_keepAliveThread;
   std::atomic_bool m_stop{false};
 

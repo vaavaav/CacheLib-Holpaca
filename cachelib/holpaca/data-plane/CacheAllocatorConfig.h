@@ -24,21 +24,6 @@ class CacheAllocatorConfig
     return *this;
   }
 
-  const CacheAllocatorConfig& validate() const {
-    if (m_address.empty()) {
-      throw std::invalid_argument("Address for this instance must be set");
-    }
-    if (m_controllerAddress.empty()) {
-      throw std::invalid_argument("Controller address must be set");
-    }
-
-    ::facebook::cachelib::CacheAllocatorConfig<
-        ::facebook::cachelib::CacheAllocator<typename CacheT::Trait>>::
-        validate();
-
-    return *this;
-  }
-
   friend CacheT;
 };
 } // namespace holpaca

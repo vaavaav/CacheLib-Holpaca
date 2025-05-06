@@ -78,24 +78,27 @@ CacheAllocator<CacheTrait>::CacheAllocator(Config& config)
     : ::facebook::cachelib::CacheAllocator<CacheTrait>(config) // deliberate
                                                                // slicing
 {
-  m_server =
-      grpc::ServerBuilder()
-          .AddListeningPort(config.m_address, grpc::InsecureServerCredentials())
-          .RegisterService(dynamic_cast<::holpaca::Stage::Service*>(this))
-          .BuildAndStart();
-  m_serverThread = std::thread([this] { m_server->Wait(); });
-  m_keepAliveThread = std::thread([this, config] {
-    auto controllerStub = ::holpaca::Controller::NewStub(grpc::CreateChannel(
-        config.m_controllerAddress, grpc::InsecureChannelCredentials()));
-    while (!m_stop) {
-      grpc::ClientContext ctx;
-      ::holpaca::KeepAliveRequest req;
-      ::holpaca::KeepAliveResponse rep;
-      req.set_address(config.m_address);
-      controllerStub->KeepAlive(&ctx, req, &rep);
-      std::this_thread::sleep_for(s_KeepAlivePeriodicity);
-    }
-  });
+  if (!config.m_address.empty() && !config.m_controllerAddress.empty()) {
+    m_server =
+        grpc::ServerBuilder()
+            .AddListeningPort(config.m_address,
+                              grpc::InsecureServerCredentials())
+            .RegisterService(dynamic_cast<::holpaca::Stage::Service*>(this))
+            .BuildAndStart();
+    m_serverThread = std::thread([this] { m_server->Wait(); });
+    m_keepAliveThread = std::thread([this, config] {
+      auto controllerStub = ::holpaca::Controller::NewStub(grpc::CreateChannel(
+          config.m_controllerAddress, grpc::InsecureChannelCredentials()));
+      while (!m_stop) {
+        grpc::ClientContext ctx;
+        ::holpaca::KeepAliveRequest req;
+        ::holpaca::KeepAliveResponse rep;
+        req.set_address(config.m_address);
+        controllerStub->KeepAlive(&ctx, req, &rep);
+        std::this_thread::sleep_for(s_KeepAlivePeriodicity);
+      }
+    });
+  }
 }
 
 template <typename CacheTrait>
@@ -114,9 +117,15 @@ PoolId CacheAllocator<CacheTrait>::addPool(std::string name, size_t size) {
 template <typename CacheTrait>
 CacheAllocator<CacheTrait>::~CacheAllocator() {
   m_stop.exchange(true);
-  m_keepAliveThread.join();
-  m_server->Shutdown();
-  m_serverThread.join();
+  if (m_keepAliveThread.joinable()) {
+    m_keepAliveThread.join();
+  }
+  if (m_server != nullptr) {
+    m_server->Shutdown();
+  }
+  if (m_serverThread.joinable()) {
+    m_serverThread.join();
+  }
 }
 
 template <typename CacheTrait>
