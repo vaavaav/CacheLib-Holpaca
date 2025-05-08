@@ -51,6 +51,7 @@ class CacheAllocator : public ::facebook::cachelib::CacheAllocator<CacheTrait>,
                       bool isLookup,
                       bool isMiss,
                       bool reset = false);
+
   void registerMetrics(PoolId id, const uint32_t diskIOPS);
 };
 

@@ -2,6 +2,7 @@
 #include <cachelib/holpaca/control-plane/algorithms/ControlAlgorithm.h>
 #include <cachelib/holpaca/control-plane/algorithms/MarginalHits.h>
 #include <cachelib/holpaca/control-plane/algorithms/PerformanceMaximization.h>
+#include <cachelib/holpaca/control-plane/algorithms/Printer.h>
 
 #include <iostream>
 #include <sstream>
@@ -66,6 +67,14 @@ int main(int argc, char** argv) {
         return 1;
       }
       controller.addAlgorithm<MarginalHits>(
+          std::chrono::milliseconds(std::stoul(args[0])));
+    } else if (std::string(argv[i]) == "Printer") {
+      if (args.size() < 1) {
+        std::cerr << "Printer requires 1 argument: <periodicity (ms)>"
+                  << std::endl;
+        return 1;
+      }
+      controller.addAlgorithm<Printer>(
           std::chrono::milliseconds(std::stoul(args[0])));
     } else {
       std::cerr << "Unknown control algorithm: " << argv[i] << std::endl;

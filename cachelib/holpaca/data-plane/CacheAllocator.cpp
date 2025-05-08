@@ -16,14 +16,15 @@ grpc::Status CacheAllocator<CacheTrait>::GetStatus(
   auto pools = response->mutable_pools();
   for (const auto pid : this->getPoolIds()) {
     auto stats = this->getPoolStats(pid);
+    const auto& pool = this->getPool(pid);
     Metrics metrics;
     {
       std::shared_lock<std::shared_timed_mutex> lock(m_metricsMutex);
       metrics = m_metrics[pid];
     }
     ::holpaca::GetStatusResponse::PoolStatus s;
-    s.set_maxsize(stats.poolSize);
-    s.set_usedsize(stats.poolUsableSize + stats.poolAdvisedSize);
+    s.set_maxsize(pool.getPoolUsableSize());
+    s.set_usedsize(pool.getCurrentAllocSize()); //.getCurrentUsedSize());
     s.set_diskiops(metrics.m_diskIOPS);
     s.set_lookups(metrics.m_lookups);
     s.set_misses(metrics.m_misses);

@@ -47,7 +47,7 @@ class SlabAllocator;
 // by the memory pool. The sum of active memory and freed slabs and freed
 // allocations per allocation class should amount for the total memory footprint
 // of this memory pool from the slab allocator's perspective.
-class MemoryPool { 
+class MemoryPool {
  public:
   // creates a pool with the id and size.
   //
@@ -413,9 +413,6 @@ class MemoryPool {
 
   // Allow access to private members by unit tests
   friend class facebook::cachelib::tests::AllocTestBase;
-
-
-
 };
 } // namespace cachelib
 } // namespace facebook
