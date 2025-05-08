@@ -73,7 +73,7 @@ CMAKE_FLAGS=(
 # <name> <branch/tag> <shallow?> <recurse-submodules?> <repository> <cmake-source-dir> [<cmake-flag>...]
 dependencies=( 
 #  "zstd v1.5.6 yes no https://github.com/facebook/zstd build/cmake -DZSTD_BUILD_TESTS=OFF"
-  "glog v0.5.0 yes no https://github.com/google/glog . -DWITH_GFLAGS=OFF"
+#  "glog v0.5.0 yes no https://github.com/google/glog . -DWITH_GFLAGS=OFF"
 #  "gflags v2.2.2 yes no https://github.com/gflags/gflags . -DGFLAGS_BUILD_TESTING=NO"
 #  "googletest v1.15.2 yes no https://github.com/google/googletest ."
 #  "fmt 8.0.1 yes no https://github.com/fmtlib/fmt . -DFMT_TEST=NO"
@@ -84,6 +84,8 @@ dependencies=(
 #  "fbthrift v2022.09.19.00 yes yes https://github.com/facebook/fbthrift . -DCMAKE_BUILD_WITH_INSTALL_RPATH=FALSE"
 #  "grpc v1.50.1 yes yes https://github.com/grpc/grpc . -DgRPC_INSTALL=ON -DgRPC_BUILD_TESTS=OFF -DgRPC_ZLIB_PROVIDER=package -DgRPC_SSL_PROVIDER=package -DABSL_PROPAGATE_CXX_STD=ON -Dprotobuf_WITH_ZLIB=ON -DCMAKE_BUILD_WITH_INSTALL_RPATH=FALSE"
 #  "Shards varying-size yes no https://github.com/vaavaav/SHARDS-cpp ."
+  "gsl 20211111 yes no https://github.com/ampl/gsl . -DGSL_DISABLE_TESTS=1
+-DDOCUMENTATION=OFF -DNO_AMPL_BINDINGS=1"
 )
 
 # Installing dependencies
