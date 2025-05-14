@@ -17,7 +17,6 @@
 #pragma once
 
 #include <gtest/gtest_prod.h>
-#include <fstream>
 
 #include "cachelib/allocator/Cache.h"
 #include "cachelib/allocator/CacheStats.h"
@@ -109,7 +108,6 @@ class PoolRebalancer : public PeriodicWorker {
 
   // slab release stats for this rebalancer.
   ReleaseStats stats_;
-  std::ofstream myfile;
 
   // loop timing stats
   LoopStats rebalanceStats_;

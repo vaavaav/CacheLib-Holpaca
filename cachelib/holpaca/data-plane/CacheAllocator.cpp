@@ -14,32 +14,41 @@ grpc::Status CacheAllocator<CacheTrait>::GetStatus(
   response->set_usedsize(this->getCacheMemoryStats().ramCacheSize -
                          this->getCacheMemoryStats().unReservedSize);
   auto pools = response->mutable_pools();
-  for (const auto pid : this->getPoolIds()) {
+  std::unordered_map<PoolId, Metrics> metrics;
+  {
+    std::shared_lock<std::shared_timed_mutex> lock(m_metricsMutex);
+    metrics = m_metrics;
+  }
+
+  for (const auto [pid, m] : metrics) {
     auto stats = this->getPoolStats(pid);
     const auto& pool = this->getPool(pid);
-    Metrics metrics;
-    {
-      std::shared_lock<std::shared_timed_mutex> lock(m_metricsMutex);
-      metrics = m_metrics[pid];
-    }
+
     ::holpaca::GetStatusResponse::PoolStatus s;
-    s.set_maxsize(pool.getPoolUsableSize());
-    s.set_usedsize(pool.getCurrentAllocSize()); //.getCurrentUsedSize());
-    s.set_diskiops(metrics.m_diskIOPS);
-    s.set_lookups(metrics.m_lookups);
-    s.set_misses(metrics.m_misses);
+    s.set_maxsize(pool.getPoolSize());
+    s.set_usedsize(pool.getCurrentAllocSize());
+    s.set_diskiops(m.m_diskIOPS);
+    s.set_lookups(m.m_lookups);
+    s.set_misses(m.m_misses);
     s.set_evictions(stats.numEvictions());
     for (auto const& [cid, cs] : stats.cacheStats) {
       s.mutable_tailaccesses()->insert(
           {static_cast<uint32_t>(cid),
            static_cast<uint32_t>(cs.containerStat.numTailAccesses)});
     }
-    auto mrc = metrics.m_shards->mrc();
+    auto mrc = m.m_shards->mrc();
     s.mutable_mrc()->insert(mrc.begin(), mrc.end());
     pools->insert({pid, s});
   }
 
   return grpc::Status::OK;
+}
+
+template <typename CacheTrait>
+void CacheAllocator<CacheTrait>::removePool(PoolId id) {
+  std::unique_lock<std::shared_timed_mutex> lock(m_metricsMutex);
+  m_metrics.erase(id);
+  Super::shrinkPool(id, Super::getPoolStats(id).poolSize);
 }
 
 template <typename CacheTrait>
@@ -51,8 +60,13 @@ grpc::Status CacheAllocator<CacheTrait>::Resize(
   std::vector<std::pair<int32_t, int64_t>> sortedRelSizes; // relSizes may
                                                            // be negative
   for (const auto& [poolId, newSize] : request->newsizes()) {
-    sortedRelSizes.push_back(
-        {poolId, newSize - this->getPoolStats(poolId).poolSize});
+    {
+      std::shared_lock<std::shared_timed_mutex> lock(m_metricsMutex);
+      if (m_metrics.find(poolId) == m_metrics.end()) {
+        sortedRelSizes.push_back(
+            {poolId, newSize - this->getPoolStats(poolId).poolSize});
+      }
+    }
   }
 
   // resizing must be done in order from the most to least downsized pool

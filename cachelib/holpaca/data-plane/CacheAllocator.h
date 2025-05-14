@@ -53,6 +53,8 @@ class CacheAllocator : public ::facebook::cachelib::CacheAllocator<CacheTrait>,
                       bool reset = false);
 
   void registerMetrics(PoolId id, const uint32_t diskIOPS);
+
+  void removePool(PoolId id);
 };
 
 using LruAllocator = CacheAllocator<LruCacheTrait>;
