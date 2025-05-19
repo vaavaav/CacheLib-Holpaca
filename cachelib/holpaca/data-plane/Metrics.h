@@ -12,8 +12,6 @@ struct Metrics {
   uint32_t m_diskIOPS{0};
   uint32_t m_misses{0};
   uint32_t m_lookups{0};
-  bool m_isActive{false};
-  int m_activeCount{0};
 };
 
 } // namespace holpaca

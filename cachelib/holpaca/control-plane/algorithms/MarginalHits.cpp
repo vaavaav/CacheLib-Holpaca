@@ -6,27 +6,23 @@ namespace facebook {
 namespace cachelib {
 namespace holpaca {
 
-MarginalHits::MarginalHits(ProxyManager* const kProxyManager,
+MarginalHits::MarginalHits(std::shared_ptr<CacheProxy> const kCacheProxy,
                            std::chrono::milliseconds const kPeriodicity)
-    : ControlAlgorithm(kProxyManager, kPeriodicity) {}
+    : ControlAlgorithm(kCacheProxy, kPeriodicity) {}
 
-void MarginalHits::loop(
-    std::unordered_map<std::string, CacheStatus>& cacheStatus) {
-  for (const auto& [address, status] : cacheStatus) {
-    for (const auto& [poolId, poolStatus] : status.m_pools) {
-      if (poolStatus.m_evictions > 0 &&
-          status.m_usedSize > s_kPoolMinSizeSlabs) {
-        m_validVictims.insert(poolId);
-      }
-      if ((poolStatus.m_maxSize - poolStatus.m_usedSize) <
-          s_kPoolMaxSizeSlabs) {
-        m_validReceivers.insert(poolId);
-      }
-      m_poolIds.push_back(poolId);
-      for (auto const& [cid, tailAccesses] : poolStatus.m_tailAccesses) {
-        m_accumTailHits[poolId].emplace(cid, tailAccesses); // TODO: fix
-        m_tailHits[poolId][cid] = tailAccesses - m_accumTailHits[poolId][cid];
-      }
+void MarginalHits::loop(CacheStatus&& cacheStatus) {
+  for (const auto& [poolId, poolStatus] : cacheStatus.m_pools) {
+    if (poolStatus.m_evictions > 0 &&
+        poolStatus.m_usedSize > s_kPoolMinSizeSlabs) {
+      m_validVictims.insert(poolId);
+    }
+    if ((poolStatus.m_maxSize - poolStatus.m_usedSize) < s_kPoolMaxSizeSlabs) {
+      m_validReceivers.insert(poolId);
+    }
+    m_poolIds.push_back(poolId);
+    for (auto const& [cid, tailAccesses] : poolStatus.m_tailAccesses) {
+      m_accumTailHits[poolId].emplace(cid, tailAccesses); // TODO: fix
+      m_tailHits[poolId][cid] = tailAccesses - m_accumTailHits[poolId][cid];
     }
 
     if (!m_validVictims.empty() && !m_validReceivers.empty()) {
@@ -55,12 +51,10 @@ void MarginalHits::loop(
                             [&](auto const& a, auto const& b) {
                               return m_smoothedRanks[a] < m_smoothedRanks[b];
                             });
-      std::unordered_map<int, uint64_t> newSizes{
-          {victim, status.m_pools.at(victim).m_maxSize - s_kPoolMinSizeSlabs},
-          {receiver,
-           status.m_pools.at(receiver).m_maxSize + s_kPoolMinSizeSlabs}};
+      std::unordered_map<PoolId, int64_t> const deltas{
+          {victim, -s_kPoolMinSizeSlabs}, {receiver, s_kPoolMinSizeSlabs}};
 
-      m_kProxyManager->getCache(address)->resize(newSizes);
+      m_kCacheProxy->resize(deltas);
     }
     // clear the data structures
     m_poolIds.clear();

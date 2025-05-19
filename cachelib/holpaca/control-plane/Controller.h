@@ -1,5 +1,5 @@
 #pragma once
-#include <cachelib/holpaca/control-plane/ProxyManager.h>
+#include <cachelib/holpaca/control-plane/CacheProxy.h>
 #include <cachelib/holpaca/control-plane/algorithms/ControlAlgorithm.h>
 #include <grpcpp/server.h>
 
@@ -11,35 +11,18 @@
 namespace facebook {
 namespace cachelib {
 namespace holpaca {
-class Controller : public ::holpaca::Controller::Service, public ProxyManager {
-  grpc::Status KeepAlive(grpc::ServerContext* context,
-                         const ::holpaca::KeepAliveRequest* request,
-                         ::holpaca::KeepAliveResponse* response) override;
-
-  std::unordered_map<std::string, std::shared_ptr<CacheProxy>> getCaches()
-      override final;
-  std::shared_ptr<CacheProxy> getCache(
-      const std::string& address) override final;
-
-  std::shared_ptr<grpc::Server> m_server;
-  std::thread m_serverThread;
-
+class Controller {
+  std::shared_ptr<CacheProxy> const m_kProxy;
   std::vector<std::unique_ptr<ControlAlgorithm>> m_controlAlgorithms;
 
-  std::shared_timed_mutex m_mutex;
-  std::unordered_map<std::string, std::shared_ptr<CacheProxy>> m_proxies;
-  std::thread m_cleanerThread;
-  std::atomic_bool m_stop{false};
-  static constexpr std::chrono::nanoseconds s_kCleanerPeriodicity =
-      std::chrono::seconds(5);
-
  public:
-  Controller(std::string address);
+  Controller(const std::string& kCacheAddress,
+             CacheProxy::CommunicationType type);
   ~Controller();
 
   template <typename T, typename... Args>
   Controller& addAlgorithm(Args... args) {
-    m_controlAlgorithms.emplace_back(std::make_unique<T>(this, args...));
+    m_controlAlgorithms.emplace_back(std::make_unique<T>(m_kProxy, args...));
     return *this;
   }
 };

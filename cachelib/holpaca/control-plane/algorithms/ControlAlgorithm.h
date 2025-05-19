@@ -5,6 +5,7 @@
 #include <atomic>
 #include <chrono>
 #include <thread>
+#include <unordered_map>
 
 namespace facebook {
 namespace cachelib {
@@ -16,21 +17,16 @@ class ControlAlgorithm {
   std::thread m_thread;
 
  protected:
-  ProxyManager* const m_kProxyManager;
-  virtual void loop(
-      std::unordered_map<std::string, CacheStatus>& cacheStatus) = 0;
+  std::shared_ptr<CacheProxy> const m_kCacheProxy;
+  virtual void loop(CacheStatus&& cacheStatus) = 0;
 
  public:
-  ControlAlgorithm(ProxyManager* const kProxyManager,
+  ControlAlgorithm(std::shared_ptr<CacheProxy> const kCacheProxy,
                    std::chrono::milliseconds const kPeriodicity)
-      : m_kProxyManager(kProxyManager), m_kPeriodicity(kPeriodicity) {
-    m_thread = std::thread([this] {
+      : m_kCacheProxy(kCacheProxy), m_kPeriodicity(kPeriodicity) {
+    m_thread = std::thread([this, kCacheProxy]() {
       while (!m_stop) {
-        std::unordered_map<std::string, CacheStatus> cacheStatus;
-        for (const auto& [address, proxy] : m_kProxyManager->getCaches()) {
-          cacheStatus[address] = proxy->getStatus();
-        }
-        loop(cacheStatus);
+        loop(kCacheProxy->getStatus());
         std::this_thread::sleep_for(m_kPeriodicity);
       }
     });

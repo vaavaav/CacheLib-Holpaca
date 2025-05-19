@@ -20,25 +20,33 @@ class CacheAllocator : public ::facebook::cachelib::CacheAllocator<CacheTrait>,
   using Super = ::facebook::cachelib::CacheAllocator<CacheTrait>;
   std::shared_ptr<::holpaca::Stage::Service> m_stage;
   std::unordered_map<PoolId, Metrics> m_metrics;
-  std::shared_timed_mutex m_metricsMutex;
+  std::shared_timed_mutex m_mutex;
   std::thread m_serverThread;
   std::shared_ptr<grpc::Server> m_server{nullptr};
-  std::thread m_keepAliveThread;
   std::atomic_bool m_stop{false};
 
-  grpc::Status GetStatus(grpc::ServerContext* context,
-                         const ::holpaca::GetStatusRequest* request,
-                         ::holpaca::GetStatusResponse* response) override final;
+  grpc::Status GetCacheStatus(
+      grpc::ServerContext* context,
+      const ::holpaca::GetCacheStatusRequest* request,
+      ::holpaca::GetCacheStatusResponse* response) override final;
+
+  grpc::Status GetPoolStatus(
+      grpc::ServerContext* context,
+      const ::holpaca::GetPoolStatusRequest* request,
+      ::holpaca::GetPoolStatusResponse* response) override final;
+
   grpc::Status Resize(grpc::ServerContext* context,
                       const ::holpaca::ResizeRequest* request,
                       ::holpaca::ResizeResponse* response) override final;
 
+  grpc::Status ResizePool(
+      grpc::ServerContext* context,
+      const ::holpaca::ResizePoolRequest* request,
+      ::holpaca::ResizePoolResponse* response) override final;
+
  public:
   using Config = CacheAllocatorConfig<CacheAllocator<CacheTrait>>;
   using Trait = CacheTrait;
-
-  static constexpr std::chrono::milliseconds s_KeepAlivePeriodicity =
-      std::chrono::milliseconds(1000);
 
   CacheAllocator(Config& config);
   ~CacheAllocator();

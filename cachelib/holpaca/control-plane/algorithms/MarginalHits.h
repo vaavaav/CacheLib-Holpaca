@@ -20,11 +20,10 @@ class MarginalHits : public ControlAlgorithm {
   std::unordered_map<uint32_t, uint32_t> m_score;
   std::unordered_map<uint32_t, double> m_smoothedRanks;
 
-  void loop(
-      std::unordered_map<std::string, CacheStatus>& cacheStatus) override final;
+  void loop(CacheStatus&& cacheStatus) override final;
 
  public:
-  MarginalHits(ProxyManager* const kProxyManager,
+  MarginalHits(std::shared_ptr<CacheProxy> const kCacheProxy,
                std::chrono::milliseconds const kPeriodicity);
 };
 
