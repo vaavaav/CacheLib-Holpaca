@@ -16,17 +16,18 @@ class ControlAlgorithm {
   std::atomic_bool m_stop{false};
   std::thread m_thread;
 
+  ProxyManager* const m_kProxyManager;
+
  protected:
-  std::shared_ptr<CacheProxy> const m_kCacheProxy;
-  virtual void loop(CacheStatus&& cacheStatus) = 0;
+  virtual void loop(ProxyManager* const kProxyManager) = 0;
 
  public:
-  ControlAlgorithm(std::shared_ptr<CacheProxy> const kCacheProxy,
+  ControlAlgorithm(ProxyManager* const kProxyManager,
                    std::chrono::milliseconds const kPeriodicity)
-      : m_kCacheProxy(kCacheProxy), m_kPeriodicity(kPeriodicity) {
-    m_thread = std::thread([this, kCacheProxy]() {
+      : m_kProxyManager(kProxyManager), m_kPeriodicity(kPeriodicity) {
+    m_thread = std::thread([this]() {
       while (!m_stop) {
-        loop(kCacheProxy->getStatus());
+        loop(m_kProxyManager);
         std::this_thread::sleep_for(m_kPeriodicity);
       }
     });

@@ -3,13 +3,97 @@
 namespace facebook {
 namespace cachelib {
 namespace holpaca {
-Controller::Controller(const std::string& kCacheAddress,
-                       CacheProxy::CommunicationType type)
-    : m_kProxy(std::make_shared<CacheProxy>(kCacheAddress, type)) {}
+
+std::unordered_map<std::string, ProxyManager::CacheStatus>
+Controller::getStatus() {
+  std::unordered_map<std::string, ProxyManager::CacheStatus> cacheStatus;
+  std::unique_lock<std::shared_timed_mutex> lock(m_proxiesMutex);
+  for (const auto& [peer, proxy] : m_proxies) {
+    ::grpc::ClientContext context;
+    ::holpaca::GetStatusRequest request;
+    ::holpaca::GetStatusResponse response;
+    proxy->GetStatus(&context, request, &response);
+    cacheStatus[peer] = CacheStatus{
+        .m_maxSize = response.cachestatus().maxsize(),
+        .m_pools = {},
+    };
+    for (const auto& [poolId, ps] : response.cachestatus().pools()) {
+      cacheStatus[peer].m_pools[poolId] = PoolStatus{
+          .m_isActive = ps.active(),
+          .m_maxSize = ps.maxsize(),
+          .m_usedSize = ps.usedsize(),
+          .m_diskIOPS = ps.diskiops(),
+          .m_evictions = ps.evictions(),
+          .m_externalSize = {ps.externalsize().begin(),
+                             ps.externalsize().end()},
+          .m_tailAccesses = {ps.tailaccesses().begin(),
+                             ps.tailaccesses().end()},
+          .m_MRC = {ps.mrc().begin(), ps.mrc().end()},
+      };
+    }
+  }
+  return cacheStatus;
+}
+
+void Controller::resize(
+    const std::vector<ProxyManager::CacheResize>& cacheResize) {
+  std::unique_lock<std::shared_timed_mutex> lock(m_proxiesMutex);
+  for (const auto& resizeOp : cacheResize) {
+    auto proxy = m_proxies[resizeOp.m_kName];
+    ::grpc::ClientContext context;
+    ::holpaca::ResizeRequest request;
+    ::holpaca::ResizeResponse response;
+    auto deltaSizes = request.mutable_poolsizes();
+    for (const auto& poolResize : resizeOp.m_kPoolResizes) {
+      ::holpaca::PoolSize poolSize;
+      poolSize.set_deltasize(poolResize.m_kDeltaSize);
+      *poolSize.mutable_externaldeltasize() = {
+          poolResize.m_kExternalDeltaSize.begin(),
+          poolResize.m_kExternalDeltaSize.end()};
+      (*deltaSizes)[poolResize.m_kId] = poolSize;
+    }
+    proxy->Resize(&context, request, &response);
+  }
+}
+
+grpc::Status Controller::Connect(grpc::ServerContext* context,
+                                 const ::holpaca::ConnectRequest* request,
+                                 ::holpaca::ConnectResponse* response) {
+  std::unique_lock<std::shared_timed_mutex> lock(m_proxiesMutex);
+  m_proxies[request->cacheaddress()] =
+      ::holpaca::Stage::NewStub(grpc::CreateChannel(
+          request->cacheaddress(), grpc::InsecureChannelCredentials()));
+
+  return grpc::Status::OK;
+}
+
+grpc::Status Controller::Disconnect(grpc::ServerContext* context,
+                                    const ::holpaca::DisconnectRequest* request,
+                                    ::holpaca::DisconnectResponse* response) {
+  std::unique_lock<std::shared_timed_mutex> lock(m_proxiesMutex);
+  auto it = m_proxies.find(request->cacheaddress());
+  return grpc::Status::OK;
+}
+
+Controller::Controller(const std::string& kControllerAddress)
+    : m_kServer(grpc::ServerBuilder()
+                    .AddListeningPort(kControllerAddress,
+                                      grpc::InsecureServerCredentials())
+                    .RegisterService(
+                        static_cast<::holpaca::Controller::Service*>(this))
+                    .BuildAndStart()),
+      m_serverThread([this] { m_kServer->Wait(); }) {}
 
 Controller::~Controller() {
   for (auto& algorithm : m_controlAlgorithms) {
     algorithm.reset();
+  }
+  m_stop.exchange(true);
+  if (m_kServer != nullptr) {
+    m_kServer->Shutdown();
+  }
+  if (m_serverThread.joinable()) {
+    m_serverThread.join();
   }
 }
 

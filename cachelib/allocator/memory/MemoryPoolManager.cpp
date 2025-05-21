@@ -118,17 +118,6 @@ PoolId MemoryPoolManager::createNewPool(folly::StringPiece name,
   return id;
 }
 
-bool MemoryPoolManager::removePool(PoolId id) {
-  folly::SharedMutex::WriteHolder l(lock_);
-  if (id >= nextPoolId_ || id < 0 || pools_[id] == nullptr) {
-    return false;
-  }
-
-  pools_[id].reset();
-  poolsByName_.erase(getPoolNameById(id));
-  return true;
-}
-
 MemoryPool& MemoryPoolManager::getPoolByName(const std::string& name) const {
   folly::SharedMutex::ReadHolder l(lock_);
   auto it = poolsByName_.find(name);

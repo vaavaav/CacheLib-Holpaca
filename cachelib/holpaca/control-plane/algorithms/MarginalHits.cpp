@@ -6,23 +6,28 @@ namespace facebook {
 namespace cachelib {
 namespace holpaca {
 
-MarginalHits::MarginalHits(std::shared_ptr<CacheProxy> const kCacheProxy,
+MarginalHits::MarginalHits(ProxyManager* const kProxyManager,
                            std::chrono::milliseconds const kPeriodicity)
-    : ControlAlgorithm(kCacheProxy, kPeriodicity) {}
+    : ControlAlgorithm(kProxyManager, kPeriodicity) {}
 
-void MarginalHits::loop(CacheStatus&& cacheStatus) {
-  for (const auto& [poolId, poolStatus] : cacheStatus.m_pools) {
-    if (poolStatus.m_evictions > 0 &&
-        poolStatus.m_usedSize > s_kPoolMinSizeSlabs) {
-      m_validVictims.insert(poolId);
-    }
-    if ((poolStatus.m_maxSize - poolStatus.m_usedSize) < s_kPoolMaxSizeSlabs) {
-      m_validReceivers.insert(poolId);
-    }
-    m_poolIds.push_back(poolId);
-    for (auto const& [cid, tailAccesses] : poolStatus.m_tailAccesses) {
-      m_accumTailHits[poolId].emplace(cid, tailAccesses); // TODO: fix
-      m_tailHits[poolId][cid] = tailAccesses - m_accumTailHits[poolId][cid];
+void MarginalHits::loop(ProxyManager* const kProxyManager) {
+  std::vector<ProxyManager::CacheResize> cacheResizes;
+  auto allCacheStatus = kProxyManager->getStatus();
+  for (const auto& [cacheId, cacheStatus] : allCacheStatus) {
+    for (const auto& [poolId, poolStatus] : cacheStatus.m_pools) {
+      if (poolStatus.m_evictions > 0 &&
+          poolStatus.m_usedSize > s_kPoolMinSizeSlabs) {
+        m_validVictims.insert(poolId);
+      }
+      if ((poolStatus.m_maxSize - poolStatus.m_usedSize) <
+          s_kPoolMaxSizeSlabs) {
+        m_validReceivers.insert(poolId);
+      }
+      m_poolIds.push_back(poolId);
+      for (auto const& [cid, tailAccesses] : poolStatus.m_tailAccesses) {
+        m_accumTailHits[poolId].emplace(cid, tailAccesses);
+        m_tailHits[poolId][cid] = tailAccesses - m_accumTailHits[poolId][cid];
+      }
     }
 
     if (!m_validVictims.empty() && !m_validReceivers.empty()) {
@@ -54,17 +59,31 @@ void MarginalHits::loop(CacheStatus&& cacheStatus) {
       std::unordered_map<PoolId, int64_t> const deltas{
           {victim, -s_kPoolMinSizeSlabs}, {receiver, s_kPoolMinSizeSlabs}};
 
-      m_kCacheProxy->resize(deltas);
+      cacheResizes.emplace_back(ProxyManager::CacheResize{
+          .m_kName = cacheId,
+          .m_kPoolResizes =
+              {
+                  ProxyManager::PoolResize{
+                      .m_kId = victim,
+                      .m_kDeltaSize = -s_kPoolMinSizeSlabs,
+                  },
+                  ProxyManager::PoolResize{.m_kId = receiver,
+                                           .m_kDeltaSize = s_kPoolMinSizeSlabs},
+              },
+      });
     }
-    // clear the data structures
-    m_poolIds.clear();
-    m_validVictims.clear();
-    m_validReceivers.clear();
-    m_tailHits.clear();
-    m_accumTailHits.clear();
-    m_score.clear();
-    m_smoothedRanks.clear();
   }
+  if (!cacheResizes.empty()) {
+    kProxyManager->resize(cacheResizes);
+  }
+  // clear the data structures
+  m_poolIds.clear();
+  m_validVictims.clear();
+  m_validReceivers.clear();
+  m_tailHits.clear();
+  m_accumTailHits.clear();
+  m_score.clear();
+  m_smoothedRanks.clear();
 }
 } // namespace holpaca
 } // namespace cachelib

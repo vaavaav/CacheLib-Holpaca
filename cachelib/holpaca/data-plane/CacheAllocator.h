@@ -1,7 +1,7 @@
 #pragma once
+#include <Shards/Shards.h>
 #include <cachelib/allocator/CacheAllocator.h>
 #include <cachelib/holpaca/data-plane/CacheAllocatorConfig.h>
-#include <cachelib/holpaca/data-plane/Metrics.h>
 #include <cachelib/holpaca/protos/Holpaca.grpc.pb.h>
 #include <cachelib/holpaca/protos/Holpaca.pb.h>
 #include <grpc/grpc.h>
@@ -10,6 +10,8 @@
 #include <grpcpp/server_context.h>
 
 #include <shared_mutex>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace facebook {
 namespace cachelib {
@@ -17,50 +19,58 @@ namespace holpaca {
 template <typename CacheTrait>
 class CacheAllocator : public ::facebook::cachelib::CacheAllocator<CacheTrait>,
                        ::holpaca::Stage::Service {
-  using Super = ::facebook::cachelib::CacheAllocator<CacheTrait>;
+  // GRPC stuff
+
   std::shared_ptr<::holpaca::Stage::Service> m_stage;
-  std::unordered_map<PoolId, Metrics> m_metrics;
-  std::shared_timed_mutex m_mutex;
+  std::shared_ptr<::holpaca::Controller::Stub> m_controller;
   std::thread m_serverThread;
   std::shared_ptr<grpc::Server> m_server{nullptr};
-  std::atomic_bool m_stop{false};
+  std::string const m_kAddress;
 
-  grpc::Status GetCacheStatus(
-      grpc::ServerContext* context,
-      const ::holpaca::GetCacheStatusRequest* request,
-      ::holpaca::GetCacheStatusResponse* response) override final;
-
-  grpc::Status GetPoolStatus(
-      grpc::ServerContext* context,
-      const ::holpaca::GetPoolStatusRequest* request,
-      ::holpaca::GetPoolStatusResponse* response) override final;
+  grpc::Status GetStatus(grpc::ServerContext* context,
+                         const ::holpaca::GetStatusRequest* request,
+                         ::holpaca::GetStatusResponse* response) override final;
 
   grpc::Status Resize(grpc::ServerContext* context,
                       const ::holpaca::ResizeRequest* request,
                       ::holpaca::ResizeResponse* response) override final;
 
-  grpc::Status ResizePool(
-      grpc::ServerContext* context,
-      const ::holpaca::ResizePoolRequest* request,
-      ::holpaca::ResizePoolResponse* response) override final;
+  // end GRPC stuff
+
+  using Super = ::facebook::cachelib::CacheAllocator<CacheTrait>;
+
+  std::shared_timed_mutex m_externalSizeMutex;
+  std::unordered_map<PoolId, std::unordered_map<std::string, uint32_t>>
+      m_externalSize;
+
+  std::shared_timed_mutex m_shardsMutex;
+  std::unordered_map<PoolId, std::shared_ptr<Shards>> m_shards;
+
+  std::shared_timed_mutex m_diskIOPSMutex;
+  std::unordered_map<PoolId, uint32_t> m_diskIOPS;
+
+  std::shared_timed_mutex m_activePoolsMutex;
+  std::unordered_set<PoolId> m_activePools;
 
  public:
   using Config = CacheAllocatorConfig<CacheAllocator<CacheTrait>>;
   using Trait = CacheTrait;
+  using ReadHandle = typename Super::ReadHandle;
+  using WriteHandle = typename Super::WriteHandle;
+  using Key = typename Super::Key;
 
   CacheAllocator(Config& config);
   ~CacheAllocator();
 
   PoolId addPool(std::string name, size_t size);
 
-  void registerAccess(PoolId id,
-                      const std::string& key,
-                      uint32_t& size,
-                      bool isLookup,
-                      bool isMiss,
-                      bool reset = false);
+  ReadHandle find(Key key);
 
-  void registerMetrics(PoolId id, const uint32_t diskIOPS);
+  bool insert(const WriteHandle& handle);
+
+  WriteHandle insertOrReplace(const WriteHandle& handle);
+
+  void registerDiskIOPS(const std::unordered_map<PoolId, uint32_t>& diskIOPS);
 
   void removePool(PoolId id);
 };

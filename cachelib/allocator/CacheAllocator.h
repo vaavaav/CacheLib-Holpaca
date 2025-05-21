@@ -802,8 +802,6 @@ class CacheAllocator : public CacheBase {
                  std::shared_ptr<RebalanceStrategy> resizeStrategy = nullptr,
                  bool ensureProvisionable = false);
 
-  bool removePool(PoolId name);
-
   // update an existing pool's config
   //
   // @param pid       pool id for the pool to be updated

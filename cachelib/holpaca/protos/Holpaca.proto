@@ -4,35 +4,28 @@ package holpaca;
 
 service Stage {
   rpc Resize(ResizeRequest) returns (ResizeResponse) {}
-  rpc ResizePool(ResizePoolRequest) returns (ResizePoolResponse) {}
-  rpc GetCacheStatus(GetCacheStatusRequest) returns (GetCacheStatusResponse) {}
-  rpc GetPoolStatus(GetPoolStatusRequest) returns (GetPoolStatusResponse) {}
+  rpc GetStatus(GetStatusRequest) returns (GetStatusResponse) {}
+}
+
+service Controller {
+  rpc Connect(ConnectRequest) returns (ConnectResponse) {}
+  rpc Disconnect(DisconnectRequest) returns (DisconnectResponse) {}
 }
 
 message ResizeRequest {
-  map<int32, int64> deltaSizes = 1;
+  map<int32, PoolSize> poolSizes = 1;
+}
+
+message PoolSize {
+  int64 deltaSize = 1;
+  map<string, int64> externalDeltaSize = 2;
 }
 
 message ResizeResponse {}
 
-message ResizePoolRequest {
-  int32 poolId = 1;
-  int64 deltaSize = 2;
-}
+message GetStatusRequest {}
 
-message ResizePoolResponse {}
-
-message GetPoolStatusRequest {
-  int32 poolId = 1;
-}
-
-message GetPoolStatusResponse {
-  PoolStatus poolStatus = 1;
-}
-
-message GetCacheStatusRequest {}
-
-message GetCacheStatusResponse {
+message GetStatusResponse {
   CacheStatus cacheStatus = 1;
 }
 
@@ -40,15 +33,27 @@ message PoolStatus {
   int32 poolId = 1;
   uint64 maxSize = 2;
   uint64 usedSize = 3;
-  map<int32, uint32> tailAccesses = 4;
-  map<uint64, double> mrc = 5;
-  uint32 diskIOPS = 6;
-  uint32 lookups = 7;
-  uint32 misses = 8;
-  uint32 evictions = 9;
+  uint32 diskIOPS = 4;
+  uint32 evictions = 5;
+  map<string, uint32> externalSize = 6;
+  map<int32, uint32> tailAccesses = 7;
+  map<uint64, double> mrc = 8;
+  bool active = 9;
 };
 
 message CacheStatus {
   map<int32, PoolStatus> pools = 1;
   uint64 maxSize = 2;
 }
+
+message ConnectRequest {
+  string cacheAddress = 1;
+}
+
+message ConnectResponse {}
+
+message DisconnectRequest {
+  string cacheAddress = 1;
+}
+
+message DisconnectResponse {}

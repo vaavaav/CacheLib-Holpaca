@@ -207,8 +207,6 @@ class MemoryAllocator {
                  const std::set<uint32_t>& allocSizes = {},
                  bool ensureProvisionable = false);
 
-  bool removePool(PoolId pid);
-
   // shrink the existing pool by _bytes_ .
   // @param id     the id for the pool
   // @param bytes  the number of bytes to be taken away from the pool

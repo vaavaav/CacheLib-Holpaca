@@ -6,6 +6,26 @@ namespace cachelib {
 namespace holpaca {
 
 template <typename CacheTrait>
+CacheAllocator<CacheTrait>::CacheAllocator(Config& config)
+    : ::facebook::cachelib::CacheAllocator<CacheTrait>(config),
+      m_kAddress(config.m_address) {
+  m_server =
+      grpc::ServerBuilder()
+          .AddListeningPort(m_kAddress, grpc::InsecureServerCredentials())
+          .RegisterService(dynamic_cast<::holpaca::Stage::Service*>(this))
+          .BuildAndStart();
+  m_serverThread = std::thread([this] { m_server->Wait(); });
+  m_controller =
+      std::make_shared<::holpaca::Controller::Stub>(grpc::CreateChannel(
+          config.m_controllerAddress, grpc::InsecureChannelCredentials()));
+  ::grpc::ClientContext context;
+  ::holpaca::ConnectRequest request;
+  ::holpaca::ConnectResponse response;
+  request.set_cacheaddress(m_kAddress);
+  m_controller->Connect(&context, request, &response);
+}
+
+template <typename CacheTrait>
 grpc::Status CacheAllocator<CacheTrait>::Resize(
     grpc::ServerContext* context,
     const ::holpaca::ResizeRequest* request,
@@ -13,8 +33,18 @@ grpc::Status CacheAllocator<CacheTrait>::Resize(
   // CacheLib provides a resize method based on relative (not absolute sizes)
   std::vector<std::pair<int32_t, int64_t>> sortedRelSizes; // relSizes may
                                                            // be negative
-  for (const auto& [poolId, delta] : request->deltasizes()) {
-    sortedRelSizes.push_back({poolId, delta});
+  for (const auto& [poolId, poolsize] : request->poolsizes()) {
+    sortedRelSizes.push_back({poolId, poolsize.deltasize()});
+    // update external size
+    {
+      std::unique_lock<std::shared_timed_mutex> lock(m_externalSizeMutex);
+      for (const auto& [externalCache, size] : poolsize.externaldeltasize()) {
+        m_externalSize[poolId][externalCache] += size;
+        if (m_externalSize[poolId][externalCache] <= 0) {
+          m_externalSize[poolId].erase(externalCache);
+        }
+      }
+    }
   }
 
   // resizing must be done in order from the most to least downsized pool
@@ -33,147 +63,167 @@ grpc::Status CacheAllocator<CacheTrait>::Resize(
 }
 
 template <typename CacheTrait>
-grpc::Status CacheAllocator<CacheTrait>::ResizePool(
-    grpc::ServerContext* context,
-    const ::holpaca::ResizePoolRequest* request,
-    ::holpaca::ResizePoolResponse* response) {
-  if (request->deltasize() < 0) {
-    Super::shrinkPool(request->poolid(), -request->deltasize());
-  } else {
-    Super::growPool(request->poolid(), request->deltasize());
-  }
-  return grpc::Status::OK;
+CacheAllocator<CacheTrait>::~CacheAllocator() {
+  ::grpc::ClientContext context;
+  ::holpaca::DisconnectRequest request;
+  ::holpaca::DisconnectResponse response;
+  request.set_cacheaddress(m_kAddress);
+  m_controller->Disconnect(&context, request, &response);
+  m_server->Shutdown();
+  m_serverThread.join();
 }
 
 template <typename CacheTrait>
-grpc::Status CacheAllocator<CacheTrait>::GetCacheStatus(
+grpc::Status CacheAllocator<CacheTrait>::GetStatus(
     grpc::ServerContext* context,
-    const ::holpaca::GetCacheStatusRequest* request,
-    ::holpaca::GetCacheStatusResponse* response) {
+    const ::holpaca::GetStatusRequest* request,
+    ::holpaca::GetStatusResponse* response) {
   auto cacheStatus = response->mutable_cachestatus();
   auto pools = cacheStatus->mutable_pools();
   cacheStatus->set_maxsize(Super::getCacheMemoryStats().ramCacheSize);
 
   for (const auto& poolId : Super::getPoolIds()) {
-    Metrics metrics;
-    metrics = m_metrics[poolId];
     const auto& pool = Super::getPool(poolId);
     ::holpaca::PoolStatus poolStatus;
+    // get DiskIOPS
+    poolStatus.set_diskiops([this, poolId]() {
+      std::shared_lock<std::shared_timed_mutex> lock(m_diskIOPSMutex);
+      return m_diskIOPS[poolId];
+    }());
+    // get ExternalSize
+    {
+      std::shared_lock<std::shared_timed_mutex> lock(m_externalSizeMutex);
+      const auto& map = m_externalSize[poolId];
+      *poolStatus.mutable_externalsize() = {map.begin(), map.end()};
+    }
+    // get MRC
+    {
+      std::shared_lock<std::shared_timed_mutex> lock(m_shardsMutex);
+      const auto& mrc = m_shards[poolId]->mrc();
+      *poolStatus.mutable_mrc() = {mrc.begin(), mrc.end()};
+    }
+    // get active
+    poolStatus.set_active([&]() {
+      std::shared_lock<std::shared_timed_mutex> lock(m_activePoolsMutex);
+      return m_activePools.find(poolId) != m_activePools.end();
+    }());
+    // rest
+    auto pstats = Super::getPoolStats(poolId);
     poolStatus.set_poolid(poolId);
     poolStatus.set_maxsize(pool.getPoolSize());
     poolStatus.set_usedsize(pool.getCurrentAllocSize());
-    poolStatus.set_diskiops(metrics.m_diskIOPS);
-    poolStatus.set_lookups(metrics.m_lookups);
-    poolStatus.set_misses(metrics.m_misses);
-    auto pstats = Super::getPoolStats(poolId);
     poolStatus.set_evictions(pstats.numEvictions());
     auto tailAccesses = poolStatus.mutable_tailaccesses();
     for (const auto& [classId, stats] : pstats.cacheStats) {
       (*tailAccesses)[classId] = stats.containerStat.numTailAccesses;
     }
-    auto mrc = metrics.m_shards->mrc();
-    poolStatus.mutable_mrc()->insert(mrc.begin(), mrc.end());
     (*pools)[poolId] = poolStatus;
   }
 
   return grpc::Status::OK;
 }
 
-// TODO: check if we need mutex
-template <typename CacheTrait>
-grpc::Status CacheAllocator<CacheTrait>::GetPoolStatus(
-    grpc::ServerContext* context,
-    const ::holpaca::GetPoolStatusRequest* request,
-    ::holpaca::GetPoolStatusResponse* response) {
-  auto poolId = request->poolid();
-  const auto& pool = Super::getPool(poolId);
-  auto poolStatus = response->mutable_poolstatus();
-  Metrics metrics;
-  metrics = m_metrics[poolId];
-  poolStatus->set_poolid(poolId);
-  poolStatus->set_maxsize(pool.getPoolSize());
-  poolStatus->set_usedsize(pool.getCurrentAllocSize());
-  poolStatus->set_diskiops(metrics.m_diskIOPS);
-  poolStatus->set_lookups(metrics.m_lookups);
-  poolStatus->set_misses(metrics.m_misses);
-  auto pstats = Super::getPoolStats(poolId);
-  poolStatus->set_evictions(pstats.numEvictions());
-  auto tailAccesses = poolStatus->mutable_tailaccesses();
-  for (const auto& [classId, stats] : pstats.cacheStats) {
-    (*tailAccesses)[classId] = stats.containerStat.numTailAccesses;
-  }
-  auto mrc = metrics.m_shards->mrc();
-  poolStatus->mutable_mrc()->insert(mrc.begin(), mrc.end());
-
-  return grpc::Status::OK;
-}
-
-template <typename CacheTrait>
-CacheAllocator<CacheTrait>::CacheAllocator(Config& config)
-    : ::facebook::cachelib::CacheAllocator<CacheTrait>(config) // deliberate
-                                                               // slicing
-{
-  if (!config.m_address.empty()) {
-    m_server =
-        grpc::ServerBuilder()
-            .AddListeningPort(config.m_address,
-                              grpc::InsecureServerCredentials())
-            .RegisterService(dynamic_cast<::holpaca::Stage::Service*>(this))
-            .BuildAndStart();
-    m_serverThread = std::thread([this] { m_server->Wait(); });
-  }
-}
-
 template <typename CacheTrait>
 PoolId CacheAllocator<CacheTrait>::addPool(std::string name, size_t size) {
   auto poolId = Super::addPool(name, size);
-
-  m_metrics[poolId].m_shards = std::unique_ptr<Shards>(
-      Shards::fixedSize(0.0001, this->getCacheMemoryStats().ramCacheSize, 100));
-
+  {
+    std::unique_lock<std::shared_timed_mutex> lock(m_activePoolsMutex);
+    m_activePools.insert(poolId);
+  }
+  {
+    std::unique_lock<std::shared_timed_mutex> lock(m_externalSizeMutex);
+    m_externalSize[poolId] = {};
+  }
+  {
+    std::unique_lock<std::shared_timed_mutex> lock(m_shardsMutex);
+    m_shards[poolId] = std::shared_ptr<Shards>(Shards::fixedSize(
+        0.0001, this->getCacheMemoryStats().ramCacheSize, 100));
+  }
+  {
+    std::unique_lock<std::shared_timed_mutex> lock(m_diskIOPSMutex);
+    m_diskIOPS[poolId] = 0;
+  }
   return poolId;
 }
 
 template <typename CacheTrait>
-CacheAllocator<CacheTrait>::~CacheAllocator() {
-  m_stop.exchange(true);
-  if (m_server != nullptr) {
-    m_server->Shutdown();
+typename CacheAllocator<CacheTrait>::ReadHandle
+CacheAllocator<CacheTrait>::find(typename CacheAllocator<CacheTrait>::Key key) {
+  auto handle = Super::find(key);
+  if (handle) {
+    std::unique_lock<std::shared_timed_mutex> lock(m_shardsMutex);
+    auto poolId =
+        Super::getAllocInfo(static_cast<const void*>(handle->getMemory()))
+            .poolId;
+    std::string keyStr(key.data(), key.size());
+    auto size = handle->getSize();
+    m_shards[poolId]->feed(keyStr, size);
   }
-  if (m_serverThread.joinable()) {
-    m_serverThread.join();
-  }
+  return handle;
 }
 
 template <typename CacheTrait>
-void CacheAllocator<CacheTrait>::registerAccess(PoolId id,
-                                                const std::string& key,
-                                                uint32_t& size,
-                                                bool isLookup,
-                                                bool isMiss,
-                                                bool reset) {
-  if (isLookup) {
-    m_metrics[id].m_lookups++;
-    if (isMiss) {
-      m_metrics[id].m_misses++;
-    }
+bool CacheAllocator<CacheTrait>::insert(
+    const typename CacheAllocator<CacheTrait>::WriteHandle& handle) {
+  bool const success = Super::insert(handle);
+  if (success) {
+    PoolId pid =
+        Super::getAllocInfo(static_cast<const void*>(handle->getMemory()))
+            .poolId;
+    auto key = handle->getKey();
+    std::string keyStr(key.data(), key.size());
+    auto size = handle->getSize();
+    std::unique_lock<std::shared_timed_mutex> lock(m_shardsMutex);
+    m_shards[pid]->erase(keyStr);
+    m_shards[pid]->feed(keyStr, size);
   }
-  if (reset) {
-    m_metrics[id].m_shards->erase(key);
-  }
-  m_metrics[id].m_shards->feed(key, size);
+  return success;
 }
 
 template <typename CacheTrait>
-void CacheAllocator<CacheTrait>::registerMetrics(PoolId id,
-                                                 const uint32_t diskIOPS) {
-  m_metrics[id].m_diskIOPS = diskIOPS;
+typename CacheAllocator<CacheTrait>::WriteHandle
+CacheAllocator<CacheTrait>::insertOrReplace(
+    const typename CacheAllocator<CacheTrait>::WriteHandle& handle) {
+  auto oldHandle = Super::insertOrReplace(handle);
+  if (oldHandle) {
+    PoolId pid =
+        Super::getAllocInfo(static_cast<const void*>(handle->getMemory()))
+            .poolId;
+    auto key = handle->getKey();
+    std::string keyStr(key.data(), key.size());
+    auto size = handle->getSize();
+    std::unique_lock<std::shared_timed_mutex> lock(m_shardsMutex);
+    m_shards[pid]->erase(keyStr);
+    m_shards[pid]->feed(keyStr, size);
+  }
+  return oldHandle;
+}
+
+template <typename CacheTrait>
+void CacheAllocator<CacheTrait>::registerDiskIOPS(
+    const std::unordered_map<PoolId, uint32_t>& diskIOPS) {
+  std::unique_lock<std::shared_timed_mutex> lock(m_diskIOPSMutex);
+  m_diskIOPS = diskIOPS;
 }
 
 template <typename CacheTrait>
 void CacheAllocator<CacheTrait>::removePool(PoolId id) {
-  m_metrics.erase(id);
-  Super::removePool(id);
+  {
+    std::unique_lock<std::shared_timed_mutex> lock(m_activePoolsMutex);
+    m_activePools.erase(id);
+  }
+  {
+    std::unique_lock<std::shared_timed_mutex> lock(m_externalSizeMutex);
+    m_externalSize.erase(id);
+  }
+  {
+    std::unique_lock<std::shared_timed_mutex> lock(m_shardsMutex);
+    m_shards.erase(id);
+  }
+  {
+    std::unique_lock<std::shared_timed_mutex> lock(m_diskIOPSMutex);
+    m_diskIOPS.erase(id);
+  }
 }
 
 template class CacheAllocator<::facebook::cachelib::LruCacheTrait>;

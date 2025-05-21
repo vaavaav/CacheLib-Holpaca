@@ -70,8 +70,7 @@ add_executable(cachelib_holpaca_controller
   ./control-plane/Main.cpp
   ./control-plane/Controller.h
   ./control-plane/Controller.cpp
-  ./control-plane/CacheProxy.h
-  ./control-plane/CacheProxy.cpp
+  ./control-plane/ProxyManager.h
   ./control-plane/algorithms/Optimizable.h
   ./control-plane/algorithms/ControlAlgorithm.h
   ./control-plane/algorithms/PerformanceMaximization.h

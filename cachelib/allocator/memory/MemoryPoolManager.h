@@ -77,8 +77,6 @@ class MemoryPoolManager {
                        size_t size,
                        const std::set<uint32_t>& allocSizes);
 
-  bool removePool(PoolId id);
-
   // shrink the existing pool by _bytes_ .
   // @param bytes  the number of bytes to be taken away from the pool
   // @return  true if the operation succeeded. false if the size of the pool

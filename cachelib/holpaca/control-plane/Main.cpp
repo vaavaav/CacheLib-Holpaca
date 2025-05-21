@@ -1,4 +1,3 @@
-#include <cachelib/holpaca/control-plane/CacheProxy.h>
 #include <cachelib/holpaca/control-plane/Controller.h>
 #include <cachelib/holpaca/control-plane/algorithms/ControlAlgorithm.h>
 #include <cachelib/holpaca/control-plane/algorithms/MarginalHits.h>
@@ -21,7 +20,7 @@ std::vector<std::string> split(const std::string& str, char delimiter) {
 }
 
 int main(int argc, char** argv) {
-  if (argc < 3) {
+  if (argc < 2) {
     std::cerr
         << "NAME\n"
         << "  " << argv[0]
@@ -29,24 +28,18 @@ int main(int argc, char** argv) {
 
         << "SYNOPSIS\n"
         << "  " << argv[0]
-        << " <cache address> <communication type> "
+        << " <address> "
            "[<control-algorithm> <arg0:arg1:...:argn>]...\n\n"
 
         << "DESCRIPTION\n"
-        << "  Launches the program using the given cache address and "
-           "communication type.\n"
+        << "  Launches the program using the given address.\n"
         << "  Optionally, one or more control algorithms may be specified, "
            "each followed by\n"
         << "  a colon-separated list of arguments.\n\n"
 
         << "OPTIONS\n"
-        << "  <cache address>\n"
-        << "      The IP address or hostname of the cache to connect to.\n\n"
-
-        << "  <communication type>\n"
-        << "      Type of communication to use. One of:\n"
-        << "        all     Broadcast to all recipients.\n"
-        << "        single  Communicate with a single target.\n\n"
+        << "  <address>\n"
+        << "      The IP address or hostname for the controller to bind to.\n\n"
 
         << "  <control-algorithm>\n"
         << "      (Optional) Name of a control algorithm module to run.\n\n"
@@ -57,8 +50,7 @@ int main(int argc, char** argv) {
 
         << "EXAMPLES\n"
         << "  " << argv[0] << " 127.0.0.1 all\n"
-        << "  " << argv[0]
-        << " 192.168.0.1 single HitRatioMaximization 1000:0.5\n\n"
+        << "  " << argv[0] << " 192.168.0.1 HitRatioMaximization 1000:0.5\n\n"
 
         << "NOTES\n"
         << "  Multiple control algorithms can be specified in sequence, each "
@@ -69,19 +61,9 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  CacheProxy::CommunicationType type;
-  if (argv[2] == std::string("all")) {
-    type = CacheProxy::CommunicationType::kAll;
-  } else if (argv[2] == std::string("single")) {
-    type = CacheProxy::CommunicationType::kSingle;
-  } else {
-    std::cerr << "Unknown communication type: " << argv[2] << std::endl;
-    return 1;
-  }
+  Controller controller(argv[1]);
 
-  Controller controller(argv[1], type);
-
-  for (int i = 3; i < argc; i += 2) {
+  for (int i = 2; i < argc; i += 2) {
     if (i + 1 >= argc) {
       std::cerr << "Control algorithm requires at least 1 argument: "
                    "<control-algorithm> <arg0:arg1:...:argn>"

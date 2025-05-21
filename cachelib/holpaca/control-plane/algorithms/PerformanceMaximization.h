@@ -42,11 +42,12 @@ class PerformanceMaximization : public ControlAlgorithm {
 
   struct CacheConfig {
     uint64_t m_maxSize{0};
+    std::string m_id;
     std::vector<PoolConfig> m_poolConfigs;
   };
 
   struct Context : public Optimizable<Context> {
-    CacheConfig m_cacheConfig;
+    std::vector<CacheConfig> m_cacheConfigs;
     void step() override final;
     double energy() const override final;
     double distance(Optimizable const* other) const override final;
@@ -58,10 +59,10 @@ class PerformanceMaximization : public ControlAlgorithm {
   const uint32_t m_kMRCMinLength{3};
   std::unordered_map<std::string, double> const m_kQoS{};
 
-  void loop(CacheStatus&& cacheStatus) override final;
+  void loop(ProxyManager* const kProxyManager) override final;
 
  public:
-  PerformanceMaximization(std::shared_ptr<CacheProxy> const kCacheProxy,
+  PerformanceMaximization(ProxyManager* const kProxyManager,
                           std::chrono::milliseconds const kPeriodicity,
                           MetricType const kMetricType,
                           double const kDelta,

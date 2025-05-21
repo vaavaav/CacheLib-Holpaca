@@ -2048,12 +2048,6 @@ PoolId CacheAllocator<CacheTrait>::addPool(
 }
 
 template <typename CacheTrait>
-bool CacheAllocator<CacheTrait>::removePool(PoolId pid) {
-  folly::SharedMutex::WriteHolder w(poolsResizeAndRebalanceLock_);
-  return allocator_->removePool(pid);
-}
-
-template <typename CacheTrait>
 void CacheAllocator<CacheTrait>::overridePoolRebalanceStrategy(
     PoolId pid, std::shared_ptr<RebalanceStrategy> rebalanceStrategy) {
   if (static_cast<size_t>(pid) >= mmContainers_.size()) {
