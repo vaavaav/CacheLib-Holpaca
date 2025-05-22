@@ -31,23 +31,23 @@ class PerformanceMaximization : public ControlAlgorithm {
 
  private:
   struct PoolConfig {
-    PoolId const m_kId;
     uint64_t m_optimalSize;
     uint64_t const m_kCurrentSize;
     tk::spline m_utilityCurve;
-    uint64_t const m_kLowerBound{0};
-    uint64_t const m_kUpperBound{0};
+    std::unordered_map<std::string, uint64_t> m_externalSize{};
+    uint64_t m_lowerBound{0};
+    uint64_t m_upperBound{0};
     double getMetric() const { return 1.0 / std::pow(m_optimalSize + 1, 1.0); };
   };
 
   struct CacheConfig {
     uint64_t m_maxSize{0};
-    std::string m_id;
-    std::vector<PoolConfig> m_poolConfigs;
+    uint64_t m_usedSize{0};
+    std::unordered_map<PoolId, PoolConfig> m_poolConfigs{};
   };
 
   struct Context : public Optimizable<Context> {
-    std::vector<CacheConfig> m_cacheConfigs;
+    std::unordered_map<std::string, CacheConfig> m_cacheConfigs;
     void step() override final;
     double energy() const override final;
     double distance(Optimizable const* other) const override final;
@@ -58,8 +58,28 @@ class PerformanceMaximization : public ControlAlgorithm {
   double const m_kDelta;
   const uint32_t m_kMRCMinLength{3};
   std::unordered_map<std::string, double> const m_kQoS{};
+  std::unordered_map<std::string, CacheConfig> m_previousIteration{};
 
   void loop(ProxyManager* const kProxyManager) override final;
+  /*
+
+  void handleCacheRemoved(
+      const std::string& removedCacheId,
+      std::unordered_map<std::string, CacheStatus>& allCacheStatus,
+      Context& context) const;
+
+  void handlePoolRemoved(
+      const std::string& cacheId,
+      const PoolId& removedPoolId,
+      std::unordered_map<std::string, CacheStatus>& allCacheStatus,
+      Context& context) const;
+
+  void handlePoolAdded(
+      const std::string& addedCacheId,
+      const PoolId& addedPoolId,
+      std::unordered_map<std::string, CacheStatus>& allCacheStatus,
+      Context& context) const;
+      */
 
  public:
   PerformanceMaximization(ProxyManager* const kProxyManager,
