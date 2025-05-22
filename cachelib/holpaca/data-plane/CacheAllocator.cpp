@@ -200,10 +200,10 @@ CacheAllocator<CacheTrait>::insertOrReplace(
 }
 
 template <typename CacheTrait>
-void CacheAllocator<CacheTrait>::registerDiskIOPS(
-    const std::unordered_map<PoolId, uint32_t>& diskIOPS) {
+void CacheAllocator<CacheTrait>::registerDiskIOPS(PoolId poolId,
+                                                  uint32_t diskIOPS) {
   std::unique_lock<std::shared_timed_mutex> lock(m_diskIOPSMutex);
-  m_diskIOPS = diskIOPS;
+  m_diskIOPS[poolId] = diskIOPS;
 }
 
 template <typename CacheTrait>

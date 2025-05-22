@@ -70,7 +70,7 @@ class CacheAllocator : public ::facebook::cachelib::CacheAllocator<CacheTrait>,
 
   WriteHandle insertOrReplace(const WriteHandle& handle);
 
-  void registerDiskIOPS(const std::unordered_map<PoolId, uint32_t>& diskIOPS);
+  void registerDiskIOPS(PoolId poolId, uint32_t diskIOPS);
 
   void removePool(PoolId id);
 };
