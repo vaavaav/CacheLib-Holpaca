@@ -9,20 +9,22 @@ template <typename CacheTrait>
 CacheAllocator<CacheTrait>::CacheAllocator(Config& config)
     : ::facebook::cachelib::CacheAllocator<CacheTrait>(config),
       m_kAddress(config.m_address) {
-  m_server =
-      grpc::ServerBuilder()
-          .AddListeningPort(m_kAddress, grpc::InsecureServerCredentials())
-          .RegisterService(dynamic_cast<::holpaca::Stage::Service*>(this))
-          .BuildAndStart();
-  m_serverThread = std::thread([this] { m_server->Wait(); });
-  m_controller =
-      std::make_shared<::holpaca::Controller::Stub>(grpc::CreateChannel(
-          config.m_controllerAddress, grpc::InsecureChannelCredentials()));
-  ::grpc::ClientContext context;
-  ::holpaca::ConnectRequest request;
-  ::holpaca::ConnectResponse response;
-  request.set_cacheaddress(m_kAddress);
-  m_controller->Connect(&context, request, &response);
+  if (!m_kAddress.empty() && !config.m_controllerAddress.empty()) {
+    m_server =
+        grpc::ServerBuilder()
+            .AddListeningPort(m_kAddress, grpc::InsecureServerCredentials())
+            .RegisterService(dynamic_cast<::holpaca::Stage::Service*>(this))
+            .BuildAndStart();
+    m_serverThread = std::thread([this] { m_server->Wait(); });
+    m_controller =
+        std::make_shared<::holpaca::Controller::Stub>(grpc::CreateChannel(
+            config.m_controllerAddress, grpc::InsecureChannelCredentials()));
+    ::grpc::ClientContext context;
+    ::holpaca::ConnectRequest request;
+    ::holpaca::ConnectResponse response;
+    request.set_cacheaddress(m_kAddress);
+    m_controller->Connect(&context, request, &response);
+  }
 }
 
 template <typename CacheTrait>
@@ -64,13 +66,17 @@ grpc::Status CacheAllocator<CacheTrait>::Resize(
 
 template <typename CacheTrait>
 CacheAllocator<CacheTrait>::~CacheAllocator() {
-  ::grpc::ClientContext context;
-  ::holpaca::DisconnectRequest request;
-  ::holpaca::DisconnectResponse response;
-  request.set_cacheaddress(m_kAddress);
-  m_controller->Disconnect(&context, request, &response);
-  m_server->Shutdown();
-  m_serverThread.join();
+  if (m_controller) {
+    ::grpc::ClientContext context;
+    ::holpaca::DisconnectRequest request;
+    ::holpaca::DisconnectResponse response;
+    request.set_cacheaddress(m_kAddress);
+    m_controller->Disconnect(&context, request, &response);
+  }
+  if (m_server) {
+    m_server->Shutdown();
+    m_serverThread.join();
+  }
 }
 
 template <typename CacheTrait>
