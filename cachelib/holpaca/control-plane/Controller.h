@@ -1,6 +1,8 @@
 #pragma once
 #include <cachelib/holpaca/control-plane/ProxyManager.h>
 #include <cachelib/holpaca/control-plane/algorithms/ControlAlgorithm.h>
+#include <cachelib/holpaca/protos/Holpaca.grpc.pb.h>
+#include <cachelib/holpaca/protos/Holpaca.pb.h>
 #include <grpcpp/server.h>
 
 #include <atomic>

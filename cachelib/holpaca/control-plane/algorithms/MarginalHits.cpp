@@ -1,7 +1,5 @@
 #include <cachelib/holpaca/control-plane/algorithms/MarginalHits.h>
 
-#include <unordered_set>
-
 namespace facebook {
 namespace cachelib {
 namespace holpaca {

@@ -1,4 +1,7 @@
 #include <cachelib/holpaca/control-plane/Controller.h>
+#include <grpcpp/create_channel.h>
+#include <grpcpp/server_builder.h>
+#include <grpcpp/server_context.h>
 
 namespace facebook {
 namespace cachelib {

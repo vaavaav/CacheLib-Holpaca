@@ -1,6 +1,5 @@
 #pragma once
-
-#include <cachelib/holpaca/control-plane/CacheProxy.h>
+#include <cachelib/allocator/memory/Slab.h>
 
 #include <string>
 #include <vector>
