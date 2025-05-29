@@ -116,8 +116,9 @@ int main(int argc, char** argv) {
     }
   }
 
-  // If something gets in stdin then we will exit
-  std::string ignore;
-  std::getline(std::cin, ignore);
+  while (1) {
+    std::this_thread::sleep_for(std::chrono::seconds(10));
+  }
+
   return 0;
 }
