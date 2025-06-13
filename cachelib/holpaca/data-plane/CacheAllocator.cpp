@@ -218,6 +218,7 @@ void CacheAllocator<CacheTrait>::registerDiskIOPS(PoolId poolId,
 
 template <typename CacheTrait>
 void CacheAllocator<CacheTrait>::removePool(PoolId id) {
+  Super::shrinkPool(id, Super::getPool(id).getPoolSize());
   {
     std::unique_lock<std::shared_timed_mutex> lock(m_activePoolsMutex);
     m_activePools.erase(id);
