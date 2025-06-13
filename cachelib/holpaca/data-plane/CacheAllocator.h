@@ -62,7 +62,7 @@ class CacheAllocator : public ::facebook::cachelib::CacheAllocator<CacheTrait>,
   CacheAllocator(Config& config);
   ~CacheAllocator();
 
-  PoolId addPool(std::string name, size_t size);
+  PoolId addPool(std::string name, size_t size = 0);
 
   ReadHandle find(Key key);
 

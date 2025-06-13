@@ -3,6 +3,8 @@
 #include <grpcpp/server_builder.h>
 #include <grpcpp/server_context.h>
 
+#include <numeric>
+
 namespace facebook {
 namespace cachelib {
 namespace holpaca {
@@ -10,7 +12,7 @@ namespace holpaca {
 std::unordered_map<std::string, ProxyManager::CacheStatus>
 Controller::getStatus() {
   std::unordered_map<std::string, ProxyManager::CacheStatus> cacheStatus;
-  std::unique_lock<std::shared_timed_mutex> lock(m_proxiesMutex);
+  std::shared_lock<std::shared_timed_mutex> lock(m_proxiesMutex);
   for (const auto& [peer, proxy] : m_proxies) {
     ::grpc::ClientContext context;
     ::holpaca::GetStatusRequest request;
@@ -35,12 +37,41 @@ Controller::getStatus() {
       };
     }
   }
+
+  /*
+  std::cout << "Controller: Retrieved status from " << cacheStatus.size()
+            << " proxies." << std::endl;
+  for (const auto& [peer, status] : cacheStatus) {
+    std::cout << peer << ":\n";
+    std::cout << "  Max Size: " << status.m_maxSize << "\n";
+    std::cout << "  Pools:\n";
+    std::cout << "    Pool ID | Active | Max Size | Used Size | Disk IOPS | "
+                 "Evictions\n";
+    for (const auto& [poolId, poolStatus] : status.m_pools) {
+      std::cout << "    " << static_cast<uint32_t>(poolId) << " | "
+                << (poolStatus.m_isActive ? "Yes" : "No") << " | "
+                << poolStatus.m_maxSize << " | " << poolStatus.m_usedSize
+                << " | " << poolStatus.m_diskIOPS << " | "
+                << poolStatus.m_evictions << "\n";
+    }
+  }
+  */
+
   return cacheStatus;
 }
 
 void Controller::resize(
     const std::vector<ProxyManager::CacheResize>& cacheResize) {
   std::unique_lock<std::shared_timed_mutex> lock(m_proxiesMutex);
+
+  if (cacheResize.size() != m_proxies.size()) {
+    std::cerr << "Controller: Mismatch in number of proxies and resize "
+                 "requests. Expected "
+              << m_proxies.size() << " but got " << cacheResize.size()
+              << ". Aborting resize." << std::endl;
+    return;
+  }
+
   for (const auto& resizeOp : cacheResize) {
     auto proxy = m_proxies[resizeOp.m_kName];
     ::grpc::ClientContext context;
@@ -66,6 +97,7 @@ grpc::Status Controller::Connect(grpc::ServerContext* context,
   m_proxies[request->cacheaddress()] =
       ::holpaca::Stage::NewStub(grpc::CreateChannel(
           request->cacheaddress(), grpc::InsecureChannelCredentials()));
+  std::cout << "Connected to " << request->cacheaddress() << std::endl;
 
   return grpc::Status::OK;
 }
@@ -74,7 +106,7 @@ grpc::Status Controller::Disconnect(grpc::ServerContext* context,
                                     const ::holpaca::DisconnectRequest* request,
                                     ::holpaca::DisconnectResponse* response) {
   std::unique_lock<std::shared_timed_mutex> lock(m_proxiesMutex);
-  auto it = m_proxies.find(request->cacheaddress());
+  m_proxies.erase(request->cacheaddress());
   return grpc::Status::OK;
 }
 
