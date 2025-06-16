@@ -22,8 +22,15 @@ CacheAllocator<CacheTrait>::CacheAllocator(Config& config)
     ::grpc::ClientContext context;
     ::holpaca::ConnectRequest request;
     ::holpaca::ConnectResponse response;
+
     request.set_cacheaddress(m_kAddress);
-    m_controller->Connect(&context, request, &response);
+
+    ::grpc::Status status;
+
+    do {
+      auto status = m_controller->Connect(&context, request, &response);
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    } while (!status.ok());
   }
 }
 
