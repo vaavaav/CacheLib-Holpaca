@@ -234,6 +234,7 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
   }
 
   // print cache status
+  /*
   for (const auto& [cacheId, cacheStatus] : allCacheStatus) {
     std::cout << "Cache '" << cacheId << "'\n";
     std::cout << "  Max size: " << cacheStatus.m_maxSize << "\n";
@@ -245,6 +246,7 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
       std::cout << "    Evictions: " << poolStatus.m_evictions << "\n";
     }
   }
+  */
 
   kProxyManager->resize(cacheResizesFinal);
 

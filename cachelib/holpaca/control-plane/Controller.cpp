@@ -38,25 +38,6 @@ Controller::getStatus() {
     }
   }
 
-  /*
-  std::cout << "Controller: Retrieved status from " << cacheStatus.size()
-            << " proxies." << std::endl;
-  for (const auto& [peer, status] : cacheStatus) {
-    std::cout << peer << ":\n";
-    std::cout << "  Max Size: " << status.m_maxSize << "\n";
-    std::cout << "  Pools:\n";
-    std::cout << "    Pool ID | Active | Max Size | Used Size | Disk IOPS | "
-                 "Evictions\n";
-    for (const auto& [poolId, poolStatus] : status.m_pools) {
-      std::cout << "    " << static_cast<uint32_t>(poolId) << " | "
-                << (poolStatus.m_isActive ? "Yes" : "No") << " | "
-                << poolStatus.m_maxSize << " | " << poolStatus.m_usedSize
-                << " | " << poolStatus.m_diskIOPS << " | "
-                << poolStatus.m_evictions << "\n";
-    }
-  }
-  */
-
   return cacheStatus;
 }
 
