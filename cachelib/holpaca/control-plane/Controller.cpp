@@ -81,9 +81,9 @@ void Controller::resize(
     for (const auto& poolResize : resizeOp.m_kPoolResizes) {
       ::holpaca::PoolSize poolSize;
       poolSize.set_deltasize(poolResize.m_kDeltaSize);
-      *poolSize.mutable_externaldeltasize() = {
-          poolResize.m_kExternalDeltaSize.begin(),
-          poolResize.m_kExternalDeltaSize.end()};
+      *poolSize.mutable_externaldeltasizes() = {
+          poolResize.m_kExternalDeltaSizes.begin(),
+          poolResize.m_kExternalDeltaSizes.end()};
       (*deltaSizes)[poolResize.m_kId] = poolSize;
     }
     proxy->Resize(&context, request, &response);

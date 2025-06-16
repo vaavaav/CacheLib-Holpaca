@@ -29,7 +29,7 @@ class ProxyManager {
   struct PoolResize {
     PoolId m_kId;
     int64_t m_kDeltaSize;
-    std::unordered_map<std::string, int64_t> m_kExternalDeltaSize;
+    std::unordered_map<std::string, int64_t> m_kExternalDeltaSizes;
   };
 
   struct CacheResize {
