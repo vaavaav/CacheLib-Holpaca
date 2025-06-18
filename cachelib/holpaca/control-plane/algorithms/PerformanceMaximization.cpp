@@ -31,14 +31,24 @@ PerformanceMaximization::PerformanceMaximization(
     MetricType const kMetricType,
     double const kDelta,
     const std::unordered_map<std::string, double>& kQoS,
-    uint64_t const kMaxInternalCacheSize)
+    uint64_t const kMaxInternalCacheSize,
+    bool printLatencies)
     : ControlAlgorithm(kProxyManager, kPeriodicity),
       m_kDelta(kDelta),
       m_kMetricType(kMetricType),
       m_kQoS(kQoS), // TODO: use QoS to change lower bounds
-      m_kMaxInternalCacheSize(kMaxInternalCacheSize) {}
+      m_kMaxInternalCacheSize(kMaxInternalCacheSize), 
+      m_kPrintLatencies(printLatencies) {}
 
 void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
+  std::chrono::high_resolution_clock::time_point start;
+  std::chrono::duration<double, std::milli> collect, compute, enforce;
+
+  // COLLECT 
+  if (m_kPrintLatencies) {
+     auto start = std::chrono::high_resolution_clock::now();
+  }
+
   auto allCacheStatus = kProxyManager->getStatus();
 
   std::unordered_set<std::string> removedCaches;
@@ -89,6 +99,17 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
         .m_activeNotValidPools = std::move(activeNotValidPools),
         .m_validPools = std::move(validPools),
     };
+  }
+
+  if (m_kPrintLatencies) {
+    collect = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::high_resolution_clock::now() - start);
+  }
+
+  // COMPUTE
+  
+  if (m_kPrintLatencies) {
+    start = std::chrono::high_resolution_clock::now();
   }
 
   Context context;
@@ -198,10 +219,19 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
     }
   }
 
-  // compute
   context.run(2000, 250, 90, 0.1, 1.003);
 
-  // enforce
+  if (m_kPrintLatencies) {
+    compute = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::high_resolution_clock::now() - start);
+  }
+
+  // ENFORCE
+  
+  if (m_kPrintLatencies) {
+    start = std::chrono::high_resolution_clock::now();
+  }
+
   for (const auto& [cacheId, cacheConfig] : context.m_cacheConfigs) {
     for (const auto& [poolId, poolConfig] : cacheConfig.m_poolConfigs) {
       cacheResizes[cacheId].m_kPoolResizes.emplace_back(
@@ -233,22 +263,14 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
     cacheResizesFinal.emplace_back(cacheResize);
   }
 
-  // print cache status
-  /*
-  for (const auto& [cacheId, cacheStatus] : allCacheStatus) {
-    std::cout << "Cache '" << cacheId << "'\n";
-    std::cout << "  Max size: " << cacheStatus.m_maxSize << "\n";
-    for (const auto& [poolId, poolStatus] : cacheStatus.m_pools) {
-      std::cout << "  Pool '" << poolId << "'\n";
-      std::cout << "    Max size: " << poolStatus.m_maxSize << "\n";
-      std::cout << "    Used size: " << poolStatus.m_usedSize << "\n";
-      std::cout << "    Disk IOPS: " << poolStatus.m_diskIOPS << "\n";
-      std::cout << "    Evictions: " << poolStatus.m_evictions << "\n";
-    }
-  }
-  */
-
   kProxyManager->resize(cacheResizesFinal);
+
+  if (m_kPrintLatencies) {
+    enforce = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::high_resolution_clock::now() - start);
+    std::cout << collect.count() << "," << compute.count() << ","
+              << enforce.count() << std::endl;
+  }
 
   m_previouslyActive.clear();
   for (const auto& [cacheId, cacheChange] : cacheChanges) {

@@ -65,6 +65,8 @@ class PerformanceMaximization : public ControlAlgorithm {
    */
   uint64_t const m_kMaxInternalCacheSize;
 
+  bool const m_kPrintLatencies{false};
+
   void loop(ProxyManager* const kProxyManager) override final;
 
  public:
@@ -73,7 +75,8 @@ class PerformanceMaximization : public ControlAlgorithm {
                           MetricType const kMetricType,
                           double const kDelta,
                           const std::unordered_map<std::string, double>& kQoS,
-                          uint64_t maxInternalCacheSize);
+                          uint64_t maxInternalCacheSize,
+                          bool printLatencies = false);
 };
 
 } // namespace holpaca

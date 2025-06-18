@@ -77,7 +77,6 @@ add_executable(cachelib_holpaca_controller
   ./control-plane/algorithms/PerformanceMaximization.cpp
   ./control-plane/algorithms/MarginalHits.h
   ./control-plane/algorithms/MarginalHits.cpp
-  ./control-plane/algorithms/Printer.h
 )
 
 find_package(GSL REQUIRED)

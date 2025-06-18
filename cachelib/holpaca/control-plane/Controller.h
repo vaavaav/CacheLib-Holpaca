@@ -30,7 +30,7 @@ class Controller : public ::holpaca::Controller::Service, public ProxyManager {
   std::unordered_map<std::string, std::shared_ptr<::holpaca::Stage::Stub>>
       m_proxies;
 
-  std::vector<std::unique_ptr<ControlAlgorithm>> m_controlAlgorithms;
+  std::unique_ptr<ControlAlgorithm> m_controlAlgorithm;
 
   std::unordered_map<std::string, ProxyManager::CacheStatus> getStatus()
       override final;
@@ -43,8 +43,8 @@ class Controller : public ::holpaca::Controller::Service, public ProxyManager {
 
   template <typename T, typename... Args>
   Controller& addAlgorithm(Args... args) {
-    m_controlAlgorithms.emplace_back(
-        std::make_unique<T>(dynamic_cast<ProxyManager* const>(this), args...));
+    m_controlAlgorithm = std::make_unique<T>(
+        dynamic_cast<ProxyManager* const>(this), args...);
     return *this;
   }
 };

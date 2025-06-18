@@ -101,9 +101,7 @@ Controller::Controller(const std::string& kControllerAddress)
       m_serverThread([this] { m_kServer->Wait(); }) {}
 
 Controller::~Controller() {
-  for (auto& algorithm : m_controlAlgorithms) {
-    algorithm.reset();
-  }
+  m_controlAlgorithm.reset();
   m_stop.exchange(true);
   if (m_kServer != nullptr) {
     m_kServer->Shutdown();

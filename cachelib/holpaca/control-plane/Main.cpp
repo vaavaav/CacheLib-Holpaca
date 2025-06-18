@@ -75,25 +75,25 @@ int main(int argc, char** argv) {
       if (args.size() < 3) {
         std::cerr
             << "HitRatioMaximization requires 2 arguments: <periodicity (ms)> "
-               "<max delta> <max internal cache size>"
+               "<max delta> <max internal cache size> [print latencies]"
             << std::endl;
         return 1;
       }
       controller.addAlgorithm<PerformanceMaximization>(
           std::chrono::milliseconds(std::stoul(args[0])),
           PerformanceMaximization::MetricType::kHitRatio, std::stod(args[1]),
-          std::unordered_map<std::string, double>{}, std::stoull(args[2]));
+          std::unordered_map<std::string, double>{}, std::stoull(args[2]), args.size() > 3 && args[3] == "true");
     } else if (std::string(argv[i]) == "ThroughputMaximization") {
       if (args.size() < 3) {
         std::cerr << "Throughput requires 2 arguments: <periodicity (ms)> "
-                     "<max delta ([0,1])> <max internal cache size>"
+                     "<max delta ([0,1])> <max internal cache size> [print latencies]"
                   << std::endl;
         return 1;
       }
       controller.addAlgorithm<PerformanceMaximization>(
           std::chrono::milliseconds(std::stoul(args[0])),
           PerformanceMaximization::MetricType::kThroughput, std::stod(args[1]),
-          std::unordered_map<std::string, double>{}, std::stoull(args[2]));
+          std::unordered_map<std::string, double>{}, std::stoull(args[2]), args.size() > 3 && args[3] == "true");
     } else if (std::string(argv[i]) == "MarginalHits") {
       if (args.size() < 1) {
         std::cerr << "MarginalHits requires 1 argument: <periodicity (ms)>"
@@ -102,15 +102,7 @@ int main(int argc, char** argv) {
       }
       controller.addAlgorithm<MarginalHits>(
           std::chrono::milliseconds(std::stoul(args[0])));
-    } else if (std::string(argv[i]) == "Printer") {
-      if (args.size() < 1) {
-        std::cerr << "Printer requires 1 argument: <periodicity (ms)>"
-                  << std::endl;
-        return 1;
-      }
-      controller.addAlgorithm<Printer>(
-          std::chrono::milliseconds(std::stoul(args[0])));
-    } else {
+    }  else {
       std::cerr << "Unknown control algorithm: " << argv[i] << std::endl;
       return 1;
     }
