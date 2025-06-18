@@ -38,6 +38,27 @@ Controller::getStatus() {
     }
   }
 
+  // print
+  /*
+  for (const auto& [cacheId, status] : cacheStatus) {
+    std::cout << "Cache: " << cacheId << ", Max Size: " << status.m_maxSize
+              << std::endl;
+    for (const auto& [poolId, poolStatus] : status.m_pools) {
+      std::cout << "  Pool: " << poolId
+                << ", Max Size: " << poolStatus.m_maxSize
+                << ", Used Size: " << poolStatus.m_usedSize
+                << ", Disk IOPS: " << poolStatus.m_diskIOPS
+                << ", Evictions: " << poolStatus.m_evictions
+                << ", Active: " << (poolStatus.m_isActive ? "Yes" : "No");
+
+      for (const auto& [externalCache, extSize] : poolStatus.m_externalSize) {
+        std::cout << "    External Cache: " << externalCache
+                  << ", Size: " << extSize << std::endl;
+      }
+    }
+  }
+  */
+
   return cacheStatus;
 }
 

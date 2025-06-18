@@ -37,16 +37,16 @@ PerformanceMaximization::PerformanceMaximization(
       m_kDelta(kDelta),
       m_kMetricType(kMetricType),
       m_kQoS(kQoS), // TODO: use QoS to change lower bounds
-      m_kMaxInternalCacheSize(kMaxInternalCacheSize), 
+      m_kMaxInternalCacheSize(kMaxInternalCacheSize),
       m_kPrintLatencies(printLatencies) {}
 
 void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
   std::chrono::high_resolution_clock::time_point start;
   std::chrono::duration<double, std::milli> collect, compute, enforce;
 
-  // COLLECT 
+  // COLLECT
   if (m_kPrintLatencies) {
-     auto start = std::chrono::high_resolution_clock::now();
+    auto start = std::chrono::high_resolution_clock::now();
   }
 
   auto allCacheStatus = kProxyManager->getStatus();
@@ -107,7 +107,7 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
   }
 
   // COMPUTE
-  
+
   if (m_kPrintLatencies) {
     start = std::chrono::high_resolution_clock::now();
   }
@@ -127,14 +127,14 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
       auto poolStatus = cacheStatus.m_pools.at(poolId);
       std::vector<double> cacheSizes;
       std::vector<double> metrics;
+      double scale = 1.0;
+      if (m_kMetricType == MetricType::kThroughput) {
+        scale = poolStatus.m_diskIOPS == 0 ? 0.0 : 1.0 / poolStatus.m_diskIOPS;
+      }
+
       for (const auto& [size, missRatio] : poolStatus.m_MRC) {
         cacheSizes.push_back(size);
-        double metric = missRatio;
-        if (m_kMetricType == MetricType::kThroughput &&
-            poolStatus.m_diskIOPS > 0) {
-          metric = missRatio / static_cast<double>(poolStatus.m_diskIOPS);
-        }
-        metrics.push_back(metric);
+        metrics.push_back(missRatio * scale);
       }
 
       // If the cache is reset, redistribute the internal cache size among the
@@ -148,7 +148,7 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
         if (removedCaches.count(externalCache) ||
             cacheChanges[externalCache].reset) {
           if (!cacheChanges[cacheId].reset) {
-            size -= static_cast<int64_t>(extSize);
+            size -= extSize;
           }
           if (auto it = externalSize.find(externalCache);
               it != externalSize.end()) {
@@ -166,8 +166,8 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
           PoolConfig{
               .m_optimalSize = size,
               .m_kCurrentSize = poolStatus.m_maxSize,
-              .m_utilityCurve =
-                  tk::spline(cacheSizes, metrics, tk::spline::cspline, true),
+              .m_utilityCurve = tk::spline(cacheSizes, metrics,
+                                           tk::spline::cspline_hermite, true),
               .m_externalSize = std::move(externalSize),
               .m_lowerBound = static_cast<uint64_t>((1.0 - m_kDelta) * size),
               .m_upperBound = static_cast<uint64_t>((1.0 + m_kDelta) * size),
@@ -219,6 +219,10 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
     }
   }
 
+  if (context.skip()) {
+    context.m_cacheConfigs.clear();
+  }
+
   context.run(2000, 250, 90, 0.1, 1.003);
 
   if (m_kPrintLatencies) {
@@ -227,7 +231,7 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
   }
 
   // ENFORCE
-  
+
   if (m_kPrintLatencies) {
     start = std::chrono::high_resolution_clock::now();
   }
@@ -242,15 +246,23 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
                   static_cast<int64_t>(
                       cacheConfig.m_poolConfigs.at(poolId).m_kCurrentSize),
               .m_kExternalDeltaSizes =
-                  [poolConfig, &cacheConfig, poolId]() {
+                  [poolConfig, &poolId, &allCacheStatus, &cacheId]() {
                     std::unordered_map<std::string, int64_t> externalDeltaSizes;
                     for (const auto& [externalCache, extSize] :
                          poolConfig.m_externalSize) {
-                      externalDeltaSizes[externalCache] =
-                          static_cast<int64_t>(extSize) -
-                          static_cast<int64_t>(
-                              cacheConfig.m_poolConfigs.at(poolId)
-                                  .m_externalSize.at(externalCache));
+                      auto it = allCacheStatus.at(cacheId)
+                                    .m_pools.at(poolId)
+                                    .m_externalSize.find(externalCache);
+                      if (it == allCacheStatus.at(cacheId)
+                                    .m_pools.at(poolId)
+                                    .m_externalSize.end()) {
+                        externalDeltaSizes[externalCache] =
+                            static_cast<int64_t>(extSize);
+                      } else {
+                        externalDeltaSizes[externalCache] =
+                            static_cast<int64_t>(extSize) -
+                            static_cast<int64_t>(it->second);
+                      }
                     }
                     return externalDeltaSizes;
                   }(),
@@ -282,7 +294,7 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
       m_previouslyActive[cacheId].insert(poolId);
     }
   }
-}
+} // namespace holpaca
 
 bool PerformanceMaximization::Context::skip() const {
   return std::accumulate(m_cacheConfigs.begin(), m_cacheConfigs.end(), 0,
@@ -321,7 +333,14 @@ void PerformanceMaximization::Context::step() {
     pool1.m_optimalSize -= kDelta;
     pool2.m_optimalSize += kDelta;
     if (cacheIdx1 != cacheIdx2) {
-      pool2.m_externalSize[cache1Id] += kDelta;
+      auto& externalSize1 = pool1.m_externalSize[cache2Id];
+      auto& externalSize2 = pool2.m_externalSize[cache1Id];
+      if (externalSize1 >= kDelta) {
+        externalSize1 -= kDelta;
+      } else {
+        externalSize2 += kDelta - static_cast<int64_t>(externalSize1);
+        externalSize1 = 0;
+      }
     }
   }
 }

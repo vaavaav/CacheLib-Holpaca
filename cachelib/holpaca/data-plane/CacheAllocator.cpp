@@ -49,8 +49,9 @@ grpc::Status CacheAllocator<CacheTrait>::Resize(
       std::unique_lock<std::shared_timed_mutex> lock(m_externalSizeMutex);
       for (const auto& [externalCache, extSize] :
            poolsize.externaldeltasizes()) {
+        m_externalSize[poolId].insert({externalCache, 0});
         m_externalSize[poolId][externalCache] += extSize;
-        if (m_externalSize[poolId][externalCache] < 0) {
+        if (m_externalSize[poolId][externalCache] == 0) {
           m_externalSize[poolId].erase(externalCache);
         }
       }
