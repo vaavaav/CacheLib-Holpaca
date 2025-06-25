@@ -162,11 +162,13 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
       auto spline =
           tk::spline(cacheSizes, metrics, tk::spline::cspline_hermite, true);
 
-      auto lowerBound = spline(size) > (m_kMetricType == MetricType::kHitRatio
-                                            ? 1 - poolStatus.m_qosLevel
-                                            : 1 / poolStatus.m_qosLevel)
-                            ? size
-                            : static_cast<uint64_t>((1.0 - m_kDelta) * size);
+      auto lowerBound =
+          poolStatus.m_qosLevel > 0 &&
+                  (spline(size) > (m_kMetricType == MetricType::kHitRatio
+                                       ? 1 - poolStatus.m_qosLevel
+                                       : 1 / poolStatus.m_qosLevel))
+              ? size
+              : static_cast<uint64_t>((1.0 - m_kDelta) * size);
 
       validPools.emplace(
           poolId,
