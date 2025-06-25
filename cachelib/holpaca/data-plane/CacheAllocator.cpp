@@ -112,16 +112,24 @@ grpc::Status CacheAllocator<CacheTrait>::GetStatus(
     }
     // get MRC
     if (isActive) {
-      std::shared_lock<std::shared_timed_mutex> lock(m_shardsMutex);
-      auto const& mrc = m_shards[poolId]->mrc();
-      *poolStatus.mutable_mrc() = {mrc.begin(), mrc.end()};
-    }
-    // get DiskIOPS
-    if (isActive) {
-      poolStatus.set_diskiops([this, poolId]() {
-        std::shared_lock<std::shared_timed_mutex> lock(m_diskIOPSMutex);
-        return m_diskIOPS[poolId];
-      }());
+      {
+        std::shared_lock<std::shared_timed_mutex> lock(m_shardsMutex);
+        auto const& mrc = m_shards[poolId]->mrc();
+        *poolStatus.mutable_mrc() = {mrc.begin(), mrc.end()};
+      }
+      {
+        poolStatus.set_diskiops([this, poolId]() {
+          std::shared_lock<std::shared_timed_mutex> lock(m_diskIOPSMutex);
+          return m_diskIOPS[poolId];
+        }());
+      }
+      {
+        poolStatus.set_qos([this, poolId]() {
+          std::shared_lock<std::shared_timed_mutex> lock(m_qosLevelsMutex);
+          auto it = m_qosLevels.find(poolId);
+          return it != m_qosLevels.end() ? it->second : 0.0;
+        }());
+      }
     }
     // get active
     poolStatus.set_active(isActive);
@@ -141,9 +149,19 @@ grpc::Status CacheAllocator<CacheTrait>::GetStatus(
 }
 
 template <typename CacheTrait>
-PoolId CacheAllocator<CacheTrait>::addPool(std::string name, size_t size) {
+PoolId CacheAllocator<CacheTrait>::addPool(std::string name,
+                                           size_t size,
+                                           double qosLevel) {
   PoolId poolId = Super::addPool(name, size); // blocks until there is enough
                                               // space for the pool
+  {
+    std::unique_lock<std::shared_timed_mutex> lock(m_qosLevelsMutex);
+    m_qosLevels[poolId] = qosLevel;
+  }
+  {
+    std::unique_lock<std::shared_timed_mutex> lock(m_externalSizeMutex);
+    m_externalSize[poolId] = {};
+  }
   {
     std::unique_lock<std::shared_timed_mutex> lock(m_activePoolsMutex);
     m_activePools.insert(poolId);

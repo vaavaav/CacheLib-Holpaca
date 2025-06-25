@@ -30,13 +30,11 @@ PerformanceMaximization::PerformanceMaximization(
     std::chrono::milliseconds const kPeriodicity,
     MetricType const kMetricType,
     double const kDelta,
-    const std::unordered_map<std::string, double>& kQoS,
     uint64_t const kMaxInternalCacheSize,
     bool printLatencies)
     : ControlAlgorithm(kProxyManager, kPeriodicity),
       m_kDelta(kDelta),
       m_kMetricType(kMetricType),
-      m_kQoS(kQoS), // TODO: use QoS to change lower bounds
       m_kMaxInternalCacheSize(kMaxInternalCacheSize),
       m_kPrintLatencies(printLatencies) {}
 
@@ -161,15 +159,23 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
         }
       }
 
+      auto spline =
+          tk::spline(cacheSizes, metrics, tk::spline::cspline_hermite, true);
+
+      auto lowerBound = spline(size) > (m_kMetricType == MetricType::kHitRatio
+                                            ? 1 - poolStatus.m_qosLevel
+                                            : 1 / poolStatus.m_qosLevel)
+                            ? size
+                            : static_cast<uint64_t>((1.0 - m_kDelta) * size);
+
       validPools.emplace(
           poolId,
           PoolConfig{
               .m_optimalSize = size,
               .m_kCurrentSize = poolStatus.m_maxSize,
-              .m_utilityCurve = tk::spline(cacheSizes, metrics,
-                                           tk::spline::cspline_hermite, true),
+              .m_utilityCurve = std::move(spline),
               .m_externalSize = std::move(externalSize),
-              .m_lowerBound = static_cast<uint64_t>((1.0 - m_kDelta) * size),
+              .m_lowerBound = static_cast<uint64_t>(lowerBound),
               .m_upperBound = static_cast<uint64_t>((1.0 + m_kDelta) * size),
           });
     }

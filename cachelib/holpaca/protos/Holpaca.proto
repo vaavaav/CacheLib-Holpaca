@@ -39,6 +39,7 @@ message PoolStatus {
   map<int32, uint32> tailAccesses = 7;
   map<uint64, double> mrc = 8;
   bool active = 9;
+  double qos = 10;
 };
 
 message CacheStatus {

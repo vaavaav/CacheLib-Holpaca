@@ -74,7 +74,6 @@ class PerformanceMaximization : public ControlAlgorithm {
                           std::chrono::milliseconds const kPeriodicity,
                           MetricType const kMetricType,
                           double const kDelta,
-                          const std::unordered_map<std::string, double>& kQoS,
                           uint64_t maxInternalCacheSize,
                           bool printLatencies = false);
 };

@@ -34,6 +34,7 @@ Controller::getStatus() {
           .m_tailAccesses = {ps.tailaccesses().begin(),
                              ps.tailaccesses().end()},
           .m_MRC = {ps.mrc().begin(), ps.mrc().end()},
+          .m_qosLevel = ps.qos(),
       };
     }
   }
