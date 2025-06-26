@@ -126,8 +126,7 @@ grpc::Status CacheAllocator<CacheTrait>::GetStatus(
       {
         poolStatus.set_qos([this, poolId]() {
           std::shared_lock<std::shared_timed_mutex> lock(m_qosLevelsMutex);
-          auto it = m_qosLevels.find(poolId);
-          return it != m_qosLevels.end() ? it->second : 0.0;
+          return m_qosLevels[poolId];
         }());
       }
     }
@@ -241,10 +240,10 @@ void CacheAllocator<CacheTrait>::registerDiskIOPS(PoolId poolId,
 
 template <typename CacheTrait>
 void CacheAllocator<CacheTrait>::removePool(PoolId id) {
-  Super::shrinkPool(id, Super::getPool(id).getPoolSize());
   {
     std::unique_lock<std::shared_timed_mutex> lock(m_activePoolsMutex);
     m_activePools.erase(id);
+    Super::shrinkPool(id, Super::getPool(id).getPoolSize());
   }
   {
     std::unique_lock<std::shared_timed_mutex> lock(m_shardsMutex);
@@ -253,6 +252,14 @@ void CacheAllocator<CacheTrait>::removePool(PoolId id) {
   {
     std::unique_lock<std::shared_timed_mutex> lock(m_diskIOPSMutex);
     m_diskIOPS.erase(id);
+  }
+  {
+    std::unique_lock<std::shared_timed_mutex> lock(m_qosLevelsMutex);
+    m_qosLevels.erase(id);
+  }
+  {
+    std::unique_lock<std::shared_timed_mutex> lock(m_externalSizeMutex);
+    m_externalSize.erase(id);
   }
 }
 

@@ -40,7 +40,6 @@ Controller::getStatus() {
   }
 
   // print
-  /*
   for (const auto& [cacheId, status] : cacheStatus) {
     std::cout << "Cache: " << cacheId << ", Max Size: " << status.m_maxSize
               << std::endl;
@@ -50,15 +49,16 @@ Controller::getStatus() {
                 << ", Used Size: " << poolStatus.m_usedSize
                 << ", Disk IOPS: " << poolStatus.m_diskIOPS
                 << ", Evictions: " << poolStatus.m_evictions
-                << ", Active: " << (poolStatus.m_isActive ? "Yes" : "No");
+                << ", Active: " << (poolStatus.m_isActive ? "Yes" : "No")
+                << std::endl;
 
       for (const auto& [externalCache, extSize] : poolStatus.m_externalSize) {
-        std::cout << "    External Cache: " << externalCache
+        std::cout << "      External Cache: " << externalCache
                   << ", Size: " << extSize << std::endl;
       }
     }
+    std::cout << std::endl;
   }
-  */
 
   return cacheStatus;
 }

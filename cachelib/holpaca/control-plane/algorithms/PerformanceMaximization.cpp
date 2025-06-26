@@ -143,7 +143,7 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
 
       std::unordered_map<std::string, int64_t> externalSize;
       for (const auto& [externalCache, extSize] : poolStatus.m_externalSize) {
-        if (removedCaches.count(externalCache) ||
+        if (!removedCaches.count(externalCache) ||
             cacheChanges[externalCache].reset) {
           if (!cacheChanges[cacheId].reset) {
             size -= extSize;
@@ -158,7 +158,7 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
           tk::spline(cacheSizes, metrics, tk::spline::cspline_hermite, true);
 
       uint64_t lowerBound =
-          poolStatus.m_qosLevel > 0 &&
+          poolStatus.m_qosLevel > 0.0 &&
                   (spline(size) > (m_kMetricType == MetricType::kHitRatio
                                        ? 1 - poolStatus.m_qosLevel
                                        : 1 / poolStatus.m_qosLevel))
@@ -253,17 +253,10 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
                     std::unordered_map<std::string, int64_t> externalDeltaSizes;
                     for (const auto& [externalCache, extSize] :
                          poolConfig.m_externalSize) {
-                      auto it = allCacheStatus.at(cacheId)
-                                    .m_pools.at(poolId)
-                                    .m_externalSize.find(externalCache);
-                      if (it == allCacheStatus.at(cacheId)
-                                    .m_pools.at(poolId)
-                                    .m_externalSize.end()) {
-                        externalDeltaSizes[externalCache] = extSize;
-                      } else {
-                        externalDeltaSizes[externalCache] =
-                            extSize - it->second;
-                      }
+                      externalDeltaSizes[externalCache] =
+                          extSize - allCacheStatus[cacheId]
+                                        .m_pools[poolId]
+                                        .m_externalSize[externalCache];
                     }
                     return externalDeltaSizes;
                   }(),
