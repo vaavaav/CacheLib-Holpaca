@@ -35,7 +35,7 @@ message PoolStatus {
   uint64 usedSize = 3;
   uint32 diskIOPS = 4;
   uint32 evictions = 5;
-  map<string, uint32> externalSize = 6;
+  map<string, int64> externalSize = 6;
   map<int32, uint32> tailAccesses = 7;
   map<uint64, double> mrc = 8;
   bool active = 9;

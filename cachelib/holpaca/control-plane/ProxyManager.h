@@ -16,7 +16,7 @@ class ProxyManager {
     uint64_t m_usedSize{0};
     uint32_t m_diskIOPS{0};
     uint32_t m_evictions{0};
-    std::unordered_map<std::string, uint64_t> m_externalSize{};
+    std::unordered_map<std::string, int64_t> m_externalSize{};
     std::unordered_map<ClassId, uint32_t> m_tailAccesses{};
     std::map<uint64_t, float> m_MRC{};
     double m_qosLevel{0.0};

@@ -40,8 +40,9 @@ class CacheAllocator : public ::facebook::cachelib::CacheAllocator<CacheTrait>,
   using Super = ::facebook::cachelib::CacheAllocator<CacheTrait>;
 
   std::shared_timed_mutex m_externalSizeMutex;
-  std::unordered_map<PoolId, std::unordered_map<std::string, uint32_t>>
-      m_externalSize;
+  std::unordered_map<PoolId, std::unordered_map<std::string, int64_t>>
+      m_externalSize; // +: acquired spaced on the external cache,
+                      // -: space lent to the external cache
 
   std::shared_timed_mutex m_shardsMutex;
   std::unordered_map<PoolId, std::shared_ptr<Shards>> m_shards;

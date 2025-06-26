@@ -163,14 +163,6 @@ PoolId CacheAllocator<CacheTrait>::addPool(std::string name,
     m_externalSize[poolId] = {};
   }
   {
-    std::unique_lock<std::shared_timed_mutex> lock(m_activePoolsMutex);
-    m_activePools.insert(poolId);
-  }
-  {
-    std::unique_lock<std::shared_timed_mutex> lock(m_externalSizeMutex);
-    m_externalSize[poolId] = {};
-  }
-  {
     std::unique_lock<std::shared_timed_mutex> lock(m_shardsMutex);
     m_shards[poolId] = std::shared_ptr<Shards>(Shards::fixedSize(
         0.001, this->getCacheMemoryStats().ramCacheSize, 100));
@@ -178,6 +170,10 @@ PoolId CacheAllocator<CacheTrait>::addPool(std::string name,
   {
     std::unique_lock<std::shared_timed_mutex> lock(m_diskIOPSMutex);
     m_diskIOPS[poolId] = 0;
+  }
+  {
+    std::unique_lock<std::shared_timed_mutex> lock(m_activePoolsMutex);
+    m_activePools.insert(poolId);
   }
 
   return poolId;
