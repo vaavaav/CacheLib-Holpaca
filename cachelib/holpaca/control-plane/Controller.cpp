@@ -40,6 +40,7 @@ Controller::getStatus() {
   }
 
   // print
+  /*
   for (const auto& [cacheId, status] : cacheStatus) {
     std::cout << "Cache: " << cacheId << ", Max Size: " << status.m_maxSize
               << std::endl;
@@ -59,6 +60,7 @@ Controller::getStatus() {
     }
     std::cout << std::endl;
   }
+  */
 
   return cacheStatus;
 }
