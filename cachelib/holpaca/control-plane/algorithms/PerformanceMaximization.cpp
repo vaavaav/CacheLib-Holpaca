@@ -143,7 +143,7 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
 
       std::unordered_map<std::string, int64_t> externalSize;
       for (const auto& [externalCache, extSize] : poolStatus.m_externalSize) {
-        if (!removedCaches.count(externalCache) ||
+        if (removedCaches.count(externalCache) ||
             cacheChanges[externalCache].reset) {
           if (!cacheChanges[cacheId].reset) {
             size -= extSize;
@@ -185,7 +185,7 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
         for (const auto& [externalCache, extSize] : poolStatus.m_externalSize) {
           if (removedCaches.count(externalCache) ||
               cacheChanges[externalCache].reset) {
-            externalDeltaSizes[externalCache] -= extSize;
+            externalDeltaSizes[externalCache] = -extSize;
           }
         }
 
@@ -202,15 +202,11 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
       // Removed Pools
       for (const auto& poolId : cacheChanges[cacheId].m_removedPools) {
         auto poolStatus = cacheStatus.m_pools.at(poolId);
-        std::unordered_map<std::string, int64_t> externalDeltaSizes = {};
-        for (const auto& [externalCache, extSize] : poolStatus.m_externalSize) {
-          externalDeltaSizes[externalCache] -= extSize;
-        }
         cacheResizes[cacheId].m_kPoolResizes.emplace_back(
             ProxyManager::PoolResize{
                 .m_kId = poolId,
                 .m_kDeltaSize = -static_cast<int64_t>(poolStatus.m_maxSize),
-                .m_kExternalDeltaSizes = std::move(externalDeltaSizes),
+                .m_kExternalDeltaSizes = {},
             });
       }
     }
