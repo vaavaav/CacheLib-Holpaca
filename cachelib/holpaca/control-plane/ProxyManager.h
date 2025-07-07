@@ -20,6 +20,7 @@ class ProxyManager {
     std::unordered_map<ClassId, uint32_t> m_tailAccesses{};
     std::map<uint64_t, float> m_MRC{};
     double m_qosLevel{0.0};
+    double m_proportion{1.0};
   };
 
   struct CacheStatus {

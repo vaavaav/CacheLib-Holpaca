@@ -56,6 +56,9 @@ class CacheAllocator : public ::facebook::cachelib::CacheAllocator<CacheTrait>,
   std::shared_timed_mutex m_qosLevelsMutex;
   std::unordered_map<PoolId, double> m_qosLevels;
 
+  std::shared_timed_mutex m_proportionsMutex;
+  std::unordered_map<PoolId, double> m_proportions;
+
  public:
   using Config = CacheAllocatorConfig<CacheAllocator<CacheTrait>>;
   using Trait = CacheTrait;
@@ -66,7 +69,10 @@ class CacheAllocator : public ::facebook::cachelib::CacheAllocator<CacheTrait>,
   CacheAllocator(Config& config);
   ~CacheAllocator();
 
-  PoolId addPool(std::string name, size_t size = 0, double qosLevel = 0.0);
+  PoolId addPool(std::string name,
+                 size_t size = 0,
+                 double qosLevel = 0.0,
+                 double proportion = 1.0);
 
   ReadHandle find(Key key);
 

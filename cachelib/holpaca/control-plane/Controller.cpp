@@ -35,6 +35,7 @@ Controller::getStatus() {
                              ps.tailaccesses().end()},
           .m_MRC = {ps.mrc().begin(), ps.mrc().end()},
           .m_qosLevel = ps.qos(),
+          .m_proportion = ps.proportion(),
       };
     }
   }

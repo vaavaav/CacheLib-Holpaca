@@ -129,6 +129,12 @@ grpc::Status CacheAllocator<CacheTrait>::GetStatus(
           return m_qosLevels[poolId];
         }());
       }
+      {
+        poolStatus.set_proportion([this, poolId]() {
+          std::shared_lock<std::shared_timed_mutex> lock(m_proportionsMutex);
+          return m_proportions[poolId];
+        }());
+      }
     }
     // get active
     poolStatus.set_active(isActive);
@@ -150,7 +156,8 @@ grpc::Status CacheAllocator<CacheTrait>::GetStatus(
 template <typename CacheTrait>
 PoolId CacheAllocator<CacheTrait>::addPool(std::string name,
                                            size_t size,
-                                           double qosLevel) {
+                                           double qosLevel,
+                                           double proportion) {
   PoolId poolId = Super::addPool(name, size); // blocks until there is enough
                                               // space for the pool
   {
@@ -169,6 +176,10 @@ PoolId CacheAllocator<CacheTrait>::addPool(std::string name,
   {
     std::unique_lock<std::shared_timed_mutex> lock(m_diskIOPSMutex);
     m_diskIOPS[poolId] = 0;
+  }
+  {
+    std::unique_lock<std::shared_timed_mutex> lock(m_proportionsMutex);
+    m_proportions[poolId] = proportion;
   }
   {
     std::unique_lock<std::shared_timed_mutex> lock(m_activePoolsMutex);
@@ -260,6 +271,10 @@ void CacheAllocator<CacheTrait>::removePool(PoolId id) {
   {
     std::unique_lock<std::shared_timed_mutex> lock(m_externalSizeMutex);
     m_externalSize.erase(id);
+  }
+  {
+    std::unique_lock<std::shared_timed_mutex> lock(m_proportionsMutex);
+    m_proportions.erase(id);
   }
 }
 

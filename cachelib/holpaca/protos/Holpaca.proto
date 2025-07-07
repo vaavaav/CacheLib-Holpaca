@@ -40,6 +40,7 @@ message PoolStatus {
   map<uint64, double> mrc = 8;
   bool active = 9;
   double qos = 10;
+  double proportion = 11;
 };
 
 message CacheStatus {
