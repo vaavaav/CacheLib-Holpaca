@@ -10,11 +10,14 @@ namespace holpaca {
 class Motivation : public ControlAlgorithm {
   std::unordered_map<PoolId, uint64_t> m_originalSizes;
 
+  bool m_useUnallocatedSize{false};
+
   void loop(ProxyManager* const kProxyManager) override final;
 
  public:
   Motivation(ProxyManager* const kProxyManager,
-             std::chrono::milliseconds const kPeriodicity);
+             std::chrono::milliseconds const kPeriodicity,
+             bool const useUnallocatedSize = false);
 };
 
 } // namespace holpaca

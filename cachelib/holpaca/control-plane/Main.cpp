@@ -106,12 +106,14 @@ int main(int argc, char** argv) {
           std::chrono::milliseconds(std::stoul(args[0])));
     } else if (std::string(argv[i]) == "Motivation") {
       if (args.size() < 1) {
-        std::cerr << "MarginalHits requires 1 argument: <periodicity (ms)> "
+        std::cerr << "Motivation requires 1 argument: <periodicity (ms)> [use "
+                     "unallocated size (true/false)]"
                   << std::endl;
         return 1;
       }
       controller.addAlgorithm<Motivation>(
-          std::chrono::milliseconds(std::stoul(args[0])));
+          std::chrono::milliseconds(std::stoul(args[0])),
+          args.size() > 1 && args[1] == "true");
     } else {
       std::cerr << "Unknown control algorithm: " << argv[i] << std::endl;
       return 1;

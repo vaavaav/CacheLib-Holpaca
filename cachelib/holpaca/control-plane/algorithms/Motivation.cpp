@@ -6,8 +6,10 @@ namespace cachelib {
 namespace holpaca {
 
 Motivation::Motivation(ProxyManager* const kProxyManager,
-                       std::chrono::milliseconds const kPeriodicity)
-    : ControlAlgorithm(kProxyManager, kPeriodicity) {}
+                       std::chrono::milliseconds const kPeriodicity,
+                       bool const useUnallocatedSize)
+    : ControlAlgorithm(kProxyManager, kPeriodicity),
+      m_useUnallocatedSize(useUnallocatedSize) {}
 
 void Motivation::loop(ProxyManager* const kProxyManager) {
   double sum = 0.0d;
@@ -22,6 +24,9 @@ void Motivation::loop(ProxyManager* const kProxyManager) {
             {poolId, poolStatus.m_maxSize}); // Store original sizes
         totalSize += m_originalSizes[poolId];
       }
+    }
+    if (m_useUnallocatedSize) {
+      totalSize = cacheStatus.m_maxSize;
     }
     ProxyManager::CacheResize cacheResize;
     std::vector<ProxyManager::PoolResize> poolResizes;
