@@ -189,58 +189,59 @@ PoolId CacheAllocator<CacheTrait>::addPool(std::string name,
   return poolId;
 }
 
-template <typename CacheTrait>
-typename CacheAllocator<CacheTrait>::ReadHandle
-CacheAllocator<CacheTrait>::find(typename CacheAllocator<CacheTrait>::Key key) {
-  auto handle = Super::find(key);
-  if (handle) {
-    std::unique_lock<std::shared_timed_mutex> lock(m_shardsMutex);
-    auto poolId =
-        Super::getAllocInfo(static_cast<const void*>(handle->getMemory()))
-            .poolId;
-    std::string keyStr(key.data(), key.size());
-    auto size = handle->getSize();
-    m_shards[poolId]->feed(keyStr, size);
-  }
-  return handle;
-}
+// template <typename CacheTrait>
+// typename CacheAllocator<CacheTrait>::ReadHandle
+// CacheAllocator<CacheTrait>::find(typename CacheAllocator<CacheTrait>::Key
+// key) {
+//  auto handle = Super::find(key);
+//  if (handle) {
+//    std::unique_lock<std::shared_timed_mutex> lock(m_shardsMutex);
+//    auto poolId =
+//        Super::getAllocInfo(static_cast<const void*>(handle->getMemory()))
+//            .poolId;
+//    std::string keyStr(key.data(), key.size());
+//    auto size = handle->getSize();
+//    m_shards[poolId]->feed(keyStr, size);
+//  }
+//  return handle;
+//}
 
-template <typename CacheTrait>
-bool CacheAllocator<CacheTrait>::insert(
-    const typename CacheAllocator<CacheTrait>::WriteHandle& handle) {
-  bool const success = Super::insert(handle);
-  if (success) {
-    PoolId pid =
-        Super::getAllocInfo(static_cast<const void*>(handle->getMemory()))
-            .poolId;
-    auto key = handle->getKey();
-    std::string keyStr(key.data(), key.size());
-    auto size = handle->getSize();
-    std::unique_lock<std::shared_timed_mutex> lock(m_shardsMutex);
-    m_shards[pid]->erase(keyStr);
-    m_shards[pid]->feed(keyStr, size);
-  }
-  return success;
-}
+// template <typename CacheTrait>
+// bool CacheAllocator<CacheTrait>::insert(
+//    const typename CacheAllocator<CacheTrait>::WriteHandle& handle) {
+//  bool const success = Super::insert(handle);
+//  if (success) {
+//    PoolId pid =
+//        Super::getAllocInfo(static_cast<const void*>(handle->getMemory()))
+//            .poolId;
+//    auto key = handle->getKey();
+//    std::string keyStr(key.data(), key.size());
+//    auto size = handle->getSize();
+//    std::unique_lock<std::shared_timed_mutex> lock(m_shardsMutex);
+//    m_shards[pid]->erase(keyStr);
+//    m_shards[pid]->feed(keyStr, size);
+//  }
+//  return success;
+//}
 
-template <typename CacheTrait>
-typename CacheAllocator<CacheTrait>::WriteHandle
-CacheAllocator<CacheTrait>::insertOrReplace(
-    const typename CacheAllocator<CacheTrait>::WriteHandle& handle) {
-  auto oldHandle = Super::insertOrReplace(handle);
-  if (oldHandle) {
-    PoolId pid =
-        Super::getAllocInfo(static_cast<const void*>(handle->getMemory()))
-            .poolId;
-    auto key = handle->getKey();
-    std::string keyStr(key.data(), key.size());
-    auto size = handle->getSize();
-    std::unique_lock<std::shared_timed_mutex> lock(m_shardsMutex);
-    m_shards[pid]->erase(keyStr);
-    m_shards[pid]->feed(keyStr, size);
-  }
-  return oldHandle;
-}
+// template <typename CacheTrait>
+// typename CacheAllocator<CacheTrait>::WriteHandle
+// CacheAllocator<CacheTrait>::insertOrReplace(
+//    const typename CacheAllocator<CacheTrait>::WriteHandle& handle) {
+//  auto oldHandle = Super::insertOrReplace(handle);
+//  if (oldHandle) {
+//    PoolId pid =
+//        Super::getAllocInfo(static_cast<const void*>(handle->getMemory()))
+//            .poolId;
+//    auto key = handle->getKey();
+//    std::string keyStr(key.data(), key.size());
+//    auto size = handle->getSize();
+//    std::unique_lock<std::shared_timed_mutex> lock(m_shardsMutex);
+//    m_shards[pid]->erase(keyStr);
+//    m_shards[pid]->feed(keyStr, size);
+//  }
+//  return oldHandle;
+//}
 
 template <typename CacheTrait>
 void CacheAllocator<CacheTrait>::registerDiskIOPS(PoolId poolId,

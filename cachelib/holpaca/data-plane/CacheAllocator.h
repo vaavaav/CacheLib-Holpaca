@@ -74,11 +74,11 @@ class CacheAllocator : public ::facebook::cachelib::CacheAllocator<CacheTrait>,
                  double qosLevel = 0.0,
                  double proportion = 1.0);
 
-  ReadHandle find(Key key);
+  //  ReadHandle find(Key key);
 
-  bool insert(const WriteHandle& handle);
+  //  bool insert(const WriteHandle& handle);
 
-  WriteHandle insertOrReplace(const WriteHandle& handle);
+  //  WriteHandle insertOrReplace(const WriteHandle& handle);
 
   void registerDiskIOPS(PoolId poolId, uint32_t diskIOPS);
 
