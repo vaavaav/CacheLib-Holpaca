@@ -218,10 +218,6 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
     }
   }
 
-  if (context.skip()) {
-    context.m_cacheConfigs.clear();
-  }
-
   context.run(2000, 250, 90, 0.1, 1.003);
 
   if (m_kPrintLatencies) {
