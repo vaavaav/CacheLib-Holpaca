@@ -46,7 +46,7 @@ grpc::Status CacheAllocator<CacheTrait>::Resize(
     sortedRelSizes.push_back({poolId, poolsize.deltasize()});
     // update external size
     {
-      std::unique_lock<std::shared_timed_mutex> lock(m_externalSizeMutex);
+      // std::unique_lock<std::shared_timed_mutex> lock(m_externalSizeMutex);
       for (const auto& [externalCache, extSize] :
            poolsize.externaldeltasizes()) {
         m_externalSize[poolId].insert({externalCache, 0});
@@ -113,25 +113,25 @@ grpc::Status CacheAllocator<CacheTrait>::GetStatus(
     // get MRC
     if (isActive) {
       {
-        std::shared_lock<std::shared_timed_mutex> lock(m_shardsMutex);
+        // std::shared_lock<std::shared_timed_mutex> lock(m_shardsMutex);
         auto const& mrc = m_shards[poolId]->mrc();
         *poolStatus.mutable_mrc() = {mrc.begin(), mrc.end()};
       }
       {
         poolStatus.set_diskiops([this, poolId]() {
-          std::shared_lock<std::shared_timed_mutex> lock(m_diskIOPSMutex);
+          // std::shared_lock<std::shared_timed_mutex> lock(m_diskIOPSMutex);
           return m_diskIOPS[poolId];
         }());
       }
       {
         poolStatus.set_qos([this, poolId]() {
-          std::shared_lock<std::shared_timed_mutex> lock(m_qosLevelsMutex);
+          // std::shared_lock<std::shared_timed_mutex> lock(m_qosLevelsMutex);
           return m_qosLevels[poolId];
         }());
       }
       {
         poolStatus.set_proportion([this, poolId]() {
-          std::shared_lock<std::shared_timed_mutex> lock(m_proportionsMutex);
+          // std::shared_lock<std::shared_timed_mutex> lock(m_proportionsMutex);
           return m_proportions[poolId];
         }());
       }
@@ -194,7 +194,7 @@ typename CacheAllocator<CacheTrait>::ReadHandle
 CacheAllocator<CacheTrait>::find(typename CacheAllocator<CacheTrait>::Key key) {
   auto handle = Super::find(key);
   if (handle) {
-    std::unique_lock<std::shared_timed_mutex> lock(m_shardsMutex);
+    // std::unique_lock<std::shared_timed_mutex> lock(m_shardsMutex);
     auto poolId =
         Super::getAllocInfo(static_cast<const void*>(handle->getMemory()))
             .poolId;
@@ -256,26 +256,26 @@ void CacheAllocator<CacheTrait>::removePool(PoolId id) {
     m_activePools.erase(id);
     Super::shrinkPool(id, Super::getPool(id).getPoolSize());
   }
-  {
-    std::unique_lock<std::shared_timed_mutex> lock(m_shardsMutex);
-    m_shards.erase(id);
-  }
-  {
-    std::unique_lock<std::shared_timed_mutex> lock(m_diskIOPSMutex);
-    m_diskIOPS.erase(id);
-  }
-  {
-    std::unique_lock<std::shared_timed_mutex> lock(m_qosLevelsMutex);
-    m_qosLevels.erase(id);
-  }
-  {
-    std::unique_lock<std::shared_timed_mutex> lock(m_externalSizeMutex);
-    m_externalSize.erase(id);
-  }
-  {
-    std::unique_lock<std::shared_timed_mutex> lock(m_proportionsMutex);
-    m_proportions.erase(id);
-  }
+  //  {
+  //    std::unique_lock<std::shared_timed_mutex> lock(m_shardsMutex);
+  //    m_shards.erase(id);
+  //  }
+  //  {
+  //    std::unique_lock<std::shared_timed_mutex> lock(m_diskIOPSMutex);
+  //    m_diskIOPS.erase(id);
+  //  }
+  //  {
+  //    std::unique_lock<std::shared_timed_mutex> lock(m_qosLevelsMutex);
+  //    m_qosLevels.erase(id);
+  //  }
+  //  {
+  //    std::unique_lock<std::shared_timed_mutex> lock(m_externalSizeMutex);
+  //    m_externalSize.erase(id);
+  //  }
+  //  {
+  //    std::unique_lock<std::shared_timed_mutex> lock(m_proportionsMutex);
+  //    m_proportions.erase(id);
+  //  }
 }
 
 template class CacheAllocator<::facebook::cachelib::LruCacheTrait>;
