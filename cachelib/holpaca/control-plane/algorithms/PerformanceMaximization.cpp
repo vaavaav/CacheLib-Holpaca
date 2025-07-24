@@ -125,14 +125,18 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
       auto poolStatus = cacheStatus.m_pools.at(poolId);
       std::vector<double> cacheSizes;
       std::vector<double> metrics;
-      double scale = 1.0;
-      if (m_kMetricType == MetricType::kThroughput) {
-        scale = poolStatus.m_diskIOPS == 0 ? 0.0 : 1.0 / poolStatus.m_diskIOPS;
-      }
 
-      for (const auto& [size, missRatio] : poolStatus.m_MRC) {
-        cacheSizes.push_back(size);
-        metrics.push_back(missRatio * scale);
+      if (m_kMetricType == MetricType::kHitRatio) {
+        for (const auto& [size, missRatio] : poolStatus.m_MRC) {
+          cacheSizes.push_back(size);
+          metrics.push_back(missRatio);
+        }
+      } else { // kThroughput
+        for (const auto& [size, missRatio] : poolStatus.m_MRC) {
+          cacheSizes.push_back(size);
+          metrics.push_back(missRatio ? -poolStatus.m_diskIOPS / missRatio
+                                      : 0.0);
+        }
       }
 
       // If the cache is reset, redistribute the internal cache size among the
