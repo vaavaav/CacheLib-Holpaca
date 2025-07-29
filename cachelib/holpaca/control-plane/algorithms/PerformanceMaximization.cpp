@@ -42,6 +42,8 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
   std::chrono::high_resolution_clock::time_point start;
   std::chrono::duration<double, std::milli> collect, compute, enforce;
 
+  double totalEstimatedEnergy = 0.0;
+
   // COLLECT
   if (m_kPrintLatencies) {
     auto start = std::chrono::high_resolution_clock::now();
@@ -134,8 +136,10 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
       } else { // kThroughput
         for (const auto& [size, missRatio] : poolStatus.m_MRC) {
           cacheSizes.push_back(size);
-          metrics.push_back(missRatio ? -poolStatus.m_diskIOPS / missRatio
-                                      : 0.0);
+          metrics.push_back(missRatio
+                                ? -static_cast<double>(poolStatus.m_diskIOPS) /
+                                      missRatio
+                                : 0.0);
         }
       }
 
@@ -160,6 +164,7 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
 
       auto spline =
           tk::spline(cacheSizes, metrics, tk::spline::cspline_hermite, true);
+      totalEstimatedEnergy += spline(size);
 
       uint64_t lowerBound =
           poolStatus.m_qosLevel > 0.0 &&
@@ -222,7 +227,8 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
     }
   }
 
-  context.run(2000, 250, 90, 0.1, 1.003);
+  context.run(2000, 250, totalEstimatedEnergy / context.m_cacheConfigs.size(),
+              90, 0.1, 1.003);
 
   if (m_kPrintLatencies) {
     compute = std::chrono::duration_cast<std::chrono::milliseconds>(

@@ -42,6 +42,7 @@ class Optimizable {
 
   void run(unsigned int const kMaxTries,
            unsigned int const kIterationsPerTemperature,
+           double const kNormalizingFactor,
            double const kInitialTemperature,
            double const kMinTemperature,
            double const kCoolingRate) {
