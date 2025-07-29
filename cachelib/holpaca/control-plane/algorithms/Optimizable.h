@@ -55,7 +55,7 @@ class Optimizable {
               .n_tries = static_cast<int>(kMaxTries),
               .iters_fixed_T = static_cast<int>(kIterationsPerTemperature),
               .step_size = 1.0, // dummy value
-              .k = 1.0,
+              .k = kNormalizingFactor,
               .t_initial = kInitialTemperature,
               .mu_t = kCoolingRate,
               .t_min = kMinTemperature,
