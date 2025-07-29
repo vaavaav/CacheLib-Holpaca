@@ -227,8 +227,11 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
     }
   }
 
-  context.run(2000, 250, totalEstimatedEnergy / context.m_cacheConfigs.size(),
-              90, 0.1, 1.003);
+  double avgEnergy = context.m_cacheConfigs.empty()
+                         ? 1.0
+                         : totalEstimatedEnergy / context.m_cacheConfigs.size();
+
+  context.run(2000, 250, avgEnergy, 90, 0.1, 1.003);
 
   if (m_kPrintLatencies) {
     compute = std::chrono::duration_cast<std::chrono::milliseconds>(
