@@ -16,7 +16,7 @@
 
 #pragma once
 
-#include <folly/SharedMutex.h>
+#include <folly/fibers/TimedMutex.h>
 
 #include <chrono>
 #include <random>
@@ -30,6 +30,9 @@
 namespace facebook {
 namespace cachelib {
 namespace navy {
+// SharedMutex is write priority by default
+using SharedMutex =
+    folly::fibers::TimedRWMutexWritePriority<folly::fibers::Baton>;
 /**
  * Rejects randomly and probability of rejection adjusts real-time to achieve
  * a target rate.
@@ -97,7 +100,6 @@ class DynamicRandomAP final : public AdmissionPolicy {
     double probFactorUpperBound{kUpperBound_};
 
     FnBypass fnBypass;
-
     // Throws if invalid config
     Config& validate();
   };
@@ -114,7 +116,9 @@ class DynamicRandomAP final : public AdmissionPolicy {
 
   // Whether to accept the given hashed key.
   // The value is used to get size based probability factor.
-  bool accept(HashedKey hk, BufferView value) override;
+  bool accept(HashedKey hk,
+              BufferView value,
+              uint64_t estimatedWriteSize = 0) override;
 
   // Reset the throttling parameters update cycle.
   // Not thread safe.
@@ -187,12 +191,13 @@ class DynamicRandomAP final : public AdmissionPolicy {
 
   mutable TLCounter acceptedBytes_;
   mutable TLCounter bypassedBytes_;
+  mutable TLCounter acceptedParcelBytes_;
 
   mutable std::minstd_rand rg_;
   const size_t deterministicKeyHashSuffixLength_{0};
 
   std::chrono::seconds startupTime_{0};
-  mutable folly::SharedMutex mutex_;
+  mutable SharedMutex mutex_;
   ThrottleParams params_;
   WriteStats writeStats_;
 

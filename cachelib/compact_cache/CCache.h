@@ -40,6 +40,8 @@
 
 #pragma once
 
+#include <folly/SharedMutex.h>
+
 #include <type_traits>
 
 #include "cachelib/allocator/Cache.h"
@@ -47,7 +49,7 @@
 #include "cachelib/allocator/ICompactCache.h"
 #include "cachelib/common/Cohort.h"
 #include "cachelib/common/FastStats.h"
-#include "cachelib/compact_cache/CCacheBucketLock.h"
+#include "cachelib/common/Mutex.h"
 #include "cachelib/compact_cache/CCacheFixedLruBucket.h"
 #include "cachelib/compact_cache/CCacheVariableLruBucket.h"
 
@@ -549,12 +551,12 @@ class CompactCache : public ICompactCache {
    * compact cache.
    */
   Allocator& allocator_;
-  CCRWBucketLocks locks_;
+  RWBucketLocks<folly::SharedMutex> locks_;
   RemoveCb removeCb_;
   ReplaceCb replaceCb_;
   ValidCb validCb_;
-  facebook::cachelib::Cohort cohort_; /**< resize cohort synchronization */
-  folly::SharedMutex resizeLock_;     /**< Lock to prevent resize conflicts. */
+  facebook::cachelib::Cohort cohort_;     /**< resize cohort synchronization */
+  mutable folly::SharedMutex resizeLock_; /**< Lock to synchronize resize. */
   const size_t bucketsPerChunk_;
   util::FastStats<CCacheStats> stats_;
   const bool allowPromotions_; /**< Whether promotions are allowed on read

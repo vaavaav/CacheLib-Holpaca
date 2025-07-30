@@ -63,7 +63,19 @@ RandomAPConfig& RandomAPConfig::setAdmProbability(double admProbability) {
   return *this;
 }
 
-// file settings
+// device settings
+void NavyConfig::enableAsyncIo(unsigned int qDepth, bool enableIoUring) {
+  if (!qDepth && !qDepth_) {
+    XDCHECK_EQ(ioEngine_, IoEngine::Sync);
+    return;
+  }
+
+  ioEngine_ = enableIoUring ? IoEngine::IoUring : IoEngine::LibAio;
+  if (qDepth) {
+    qDepth_ = qDepth;
+  }
+}
+
 void NavyConfig::setSimpleFile(const std::string& fileName,
                                uint64_t fileSize,
                                bool truncateFile) {
@@ -109,13 +121,20 @@ BlockCacheConfig& BlockCacheConfig::enableCustomReinsertion(
 }
 
 BlockCacheConfig& BlockCacheConfig::setCleanRegions(
-    uint32_t cleanRegions) noexcept {
+    uint32_t cleanRegions, uint32_t cleanRegionThreads) {
+  if (!cleanRegionThreads || cleanRegionThreads > cleanRegions + 1) {
+    throw std::invalid_argument(folly::sformat(
+        "number of clean region threads should be in the range of [1, {}]",
+        cleanRegions + 1));
+  }
+
   cleanRegions_ = cleanRegions;
   // Increasing number of in-mem buffers is a short-term mitigation
   // to avoid reinsertion failure when all buffers in clean regions
   // are pending flush and the reclaim job is running before flushing complete
   // (see T93961857, T93959811)
   numInMemBuffers_ = 2 * cleanRegions;
+  cleanRegionThreads_ = cleanRegionThreads;
   return *this;
 }
 
@@ -137,6 +156,51 @@ BigHashConfig& BigHashConfig::setSizePctAndMaxItemSize(
 }
 
 // job scheduler settings
+
+void NavyConfig::setReaderAndWriterThreads(unsigned int readerThreads,
+                                           unsigned int writerThreads,
+                                           unsigned int maxNumReads,
+                                           unsigned int maxNumWrites,
+                                           unsigned int stackSizeKB) {
+  readerThreads_ = readerThreads;
+  writerThreads_ = writerThreads;
+  maxNumReads_ = maxNumReads;
+  maxNumWrites_ = maxNumWrites;
+  stackSize_ = stackSizeKB * 1024;
+
+  if ((maxNumReads > 0 && maxNumWrites == 0) ||
+      (maxNumReads == 0 && maxNumWrites > 0)) {
+    throw std::invalid_argument(
+        "maxNumReads and maxNumWrites should be both 0 or both >0");
+  }
+
+  // Limit the fiber stack size to 1MB to prevent any misconfiguration;
+  // The 1MB is too large for most use cases and there will be
+  // lots of memory amounts to >800MB per thread wasted
+  if (stackSizeKB >= 1024) {
+    throw std::invalid_argument(
+        "Maximum fiber stack size for each thread should be less than 1024 KB");
+  }
+
+  if (maxNumReads > 0 || maxNumWrites > 0) {
+    if ((maxNumReads % readerThreads_) || (maxNumWrites % writerThreads_)) {
+      throw std::invalid_argument(folly::sformat(
+          "reader threads ({}) and writer threads ({}) should divide evenly "
+          "into maxNumReads ({}) or maxNumWrites ({})",
+          readerThreads_, writerThreads_, maxNumReads, maxNumWrites));
+    }
+  }
+
+  if (!qDepth_) {
+    // Adjust the device qdepth and enable async IO if needed
+    qDepth_ =
+        std::max(maxNumReads_ / readerThreads_, maxNumWrites_ / writerThreads_);
+    if (qDepth_ > 0) {
+      ioEngine_ = IoEngine::IoUring;
+    }
+  }
+}
+
 void NavyConfig::setNavyReqOrderingShards(uint64_t navyReqOrderingShards) {
   if (navyReqOrderingShards == 0) {
     throw std::invalid_argument(
@@ -155,6 +219,8 @@ std::map<std::string, std::string> EnginesConfig::serialize() const {
       folly::to<std::string>(blockCache().getRegionSize());
   configMap["navyConfig::blockCacheCleanRegions"] =
       folly::to<std::string>(blockCache().getCleanRegions());
+  configMap["navyConfig::blockCacheCleanRegionThreads"] =
+      folly::to<std::string>(blockCache().getCleanRegionThreads());
   configMap["navyConfig::blockCacheReinsertionHitsThreshold"] =
       folly::to<std::string>(
           blockCache().getReinsertionConfig().getHitsThreshold());
@@ -210,6 +276,9 @@ std::map<std::string, std::string> NavyConfig::serialize() const {
   configMap["navyConfig::truncateFile"] = truncateFile_ ? "true" : "false";
   configMap["navyConfig::deviceMaxWriteSize"] =
       folly::to<std::string>(deviceMaxWriteSize_);
+  configMap["navyConfig::ioEngine"] = getIoEngineName(ioEngine_).str();
+  configMap["navyConfig::QDepth"] = folly::to<std::string>(qDepth_);
+  configMap["navyConfig::enableFDP"] = folly::to<std::string>(enableFDP_);
 
   // Job scheduler settings
   configMap["navyConfig::readerThreads"] =
@@ -218,6 +287,9 @@ std::map<std::string, std::string> NavyConfig::serialize() const {
       folly::to<std::string>(writerThreads_);
   configMap["navyConfig::navyReqOrderingShards"] =
       folly::to<std::string>(navyReqOrderingShards_);
+  configMap["navyConfig::maxNumReads"] = folly::to<std::string>(maxNumReads_);
+  configMap["navyConfig::maxNumWrites"] = folly::to<std::string>(maxNumWrites_);
+  configMap["navyConfig::stackSize"] = folly::to<std::string>(stackSize_);
 
   // Other settings
   configMap["navyConfig::maxConcurrentInserts"] =

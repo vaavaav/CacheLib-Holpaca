@@ -263,6 +263,15 @@ bool isDir(const std::string& name) {
   return S_ISDIR(buf.st_mode) ? true : false;
 }
 
+bool isBlk(const std::string& name) {
+  struct stat buf = {};
+  auto err = stat(name.c_str(), &buf);
+  if (err) {
+    throwSystemError(errno, folly::sformat("Path: {}", name));
+  }
+  return S_ISBLK(buf.st_mode) ? true : false;
+}
+
 /* throws error on any failure. */
 void makeDir(const std::string& name) {
   auto mkdirs = [](const std::string& path, mode_t mode) {
@@ -310,7 +319,7 @@ void removePath(const std::string& name) {
     if (!dir) {
       throwSystemError(errno, folly::sformat("Err removing path={}", name));
     }
-    SCOPE_EXIT { free(dir); };
+    SCOPE_EXIT { closedir(dir); };
     struct dirent* entry;
     while ((entry = readdir(dir))) {
       if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {

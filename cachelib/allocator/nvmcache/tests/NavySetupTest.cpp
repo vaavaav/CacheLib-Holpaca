@@ -42,6 +42,14 @@ void changeMode(const std::string& name, mode_t mode) {
   chmod(tmp, mode);
 }
 
+size_t getFileSize(std::string& fileName) {
+  auto f = folly::File(fileName.c_str());
+  struct stat fileStat;
+  auto ret = fstat(f.fd(), &fileStat);
+  XDCHECK(ret == 0);
+  return fileStat.st_size;
+}
+
 } // namespace
 TEST(NavySetupTest, RAID0DeviceSize) {
   // Verify size is reduced when we pass in a size that's not aligned to
@@ -112,6 +120,109 @@ TEST(NavySetupTest, FileCreationFailure) {
   EXPECT_EQ(files.size() * 8 * 1024 * 1024, device->getSize());
 }
 
+// Test the file size will change when the requested file size is different from
+// the existing file size for FileDevice
+TEST(NavySetupTest, FileDeviceResizeFile) {
+  auto filePath = folly::sformat("/tmp/navy_device_test-{}", ::getpid());
+  util::makeDir(filePath);
+  SCOPE_EXIT { util::removePath(filePath); };
+  std::string file = filePath + "/CACHE0";
+
+  uint64_t fileSize = 1024 * 1024 * 1024;
+  int ioAlignSize = 4096;
+  int stripeSize = 8 * 1024 * 1024;
+
+  std::vector<std::string> navyFileArray;
+
+  navy::NavyConfig cfg{};
+  cfg.setSimpleFile(file, fileSize, true /*truncateFile*/);
+  cfg.blockCache().setRegionSize(stripeSize);
+  cfg.setBlockSize(ioAlignSize);
+
+  createDevice(cfg, nullptr);
+
+  EXPECT_EQ(getFileSize(file), fileSize);
+
+  // reduce the file size ("truncate" = false)
+  cfg.setSimpleFile(file, fileSize / 2, false /*truncateFile*/);
+  createDevice(cfg, nullptr);
+  EXPECT_EQ(getFileSize(file), fileSize); // file size won't change
+
+  // increase the file size ("truncate" = false)
+  cfg.setSimpleFile(file, fileSize * 2, false /*truncateFile*/);
+  createDevice(cfg, nullptr);
+  EXPECT_EQ(getFileSize(file), fileSize); // file size won't change
+
+  // reduce the file size ("truncate" = true)
+  cfg.setSimpleFile(file, fileSize / 2, true /*truncateFile*/);
+  createDevice(cfg, nullptr);
+  EXPECT_EQ(getFileSize(file), fileSize / 2);
+
+  // increase the file size ("truncate" = true)
+  cfg.setSimpleFile(file, fileSize * 2, true /*truncateFile*/);
+  createDevice(cfg, nullptr);
+  EXPECT_EQ(getFileSize(file), fileSize * 2);
+}
+
+// Test the file size will change when the requested file size is different from
+// the existing file size for RAID0Device
+TEST(NavySetupTest, RAID0DeviceResizeFile) {
+  auto filePath =
+      folly::sformat("/tmp/navy_device_raid0io_test-{}", ::getpid());
+  util::makeDir(filePath);
+  SCOPE_EXIT { util::removePath(filePath); };
+
+  std::vector<std::string> files = {filePath + "/CACHE0", filePath + "/CACHE1",
+                                    filePath + "/CACHE2", filePath + "/CACHE3"};
+
+  uint64_t fileSize = 1024 * 1024 * 1024;
+  int ioAlignSize = 4096;
+  int stripeSize = 8 * 1024 * 1024;
+
+  std::vector<std::string> navyFileArray;
+  for (const auto& file : files) {
+    navyFileArray.push_back(file);
+  }
+
+  navy::NavyConfig cfg{};
+  cfg.setRaidFiles(navyFileArray, fileSize, true /*truncateFile*/);
+  cfg.blockCache().setRegionSize(stripeSize);
+  cfg.setBlockSize(ioAlignSize);
+
+  createDevice(cfg, nullptr);
+  for (auto& file : files) {
+    EXPECT_EQ(getFileSize(file), fileSize);
+  }
+
+  // reduce the file size ("truncate" = false)
+  cfg.setRaidFiles(navyFileArray, fileSize / 2, false /*truncateFile*/);
+  createDevice(cfg, nullptr);
+  for (auto& file : files) {
+    EXPECT_EQ(getFileSize(file), fileSize); // file size won't change
+  }
+
+  // increase the file size ("truncate" = false)
+  cfg.setRaidFiles(navyFileArray, fileSize * 2, false /*truncateFile*/);
+  createDevice(cfg, nullptr);
+  for (auto& file : files) {
+    EXPECT_EQ(getFileSize(file), fileSize); // file size won't change
+  }
+
+  // reduce the file size ("truncate" = true)
+  cfg.setRaidFiles(navyFileArray, fileSize / 2, true /*truncateFile*/);
+  createDevice(cfg, nullptr);
+  for (auto& file : files) {
+    EXPECT_EQ(getFileSize(file), fileSize / 2);
+  }
+
+  // increase the file size ("truncate" = true)
+  cfg.setRaidFiles(navyFileArray, fileSize * 2, true /*truncateFile*/);
+  createDevice(cfg, nullptr);
+  for (auto& file : files) {
+    EXPECT_EQ(getFileSize(file), fileSize * 2);
+  }
+}
+
 TEST(NavySetupTest, EnginesSetup) {
   {
     // Valid NavyConfig setup
@@ -122,6 +233,7 @@ TEST(NavySetupTest, EnginesSetup) {
     // 20MB block cache 0.
     cfg.blockCache().setSize(20 * 1024 * 1024);
     navy::EnginesConfig pair1;
+    pair1.blockCache().setRegionSize(4 * 1024 * 1024);
     // Second bighash: 5 pct, 640 threshold.
     pair1.bigHash().setSizePctAndMaxItemSize(5, 640);
     cfg.addEnginePair(std::move(pair1));
@@ -141,6 +253,7 @@ TEST(NavySetupTest, EnginesSetup) {
     // 20MB block cache 0.
     cfg.blockCache().setSize(20 * 1024 * 1024);
     navy::EnginesConfig pair1;
+    pair1.blockCache().setRegionSize(4 * 1024 * 1024);
     // Second bighash: 5 pct, 640 threshold.
     pair1.bigHash().setSizePctAndMaxItemSize(5, 640);
     cfg.addEnginePair(std::move(pair1));
@@ -158,6 +271,7 @@ TEST(NavySetupTest, EnginesSetup) {
     // 20MB block cache 0.
     cfg.blockCache().setSize(20 * 1024 * 1024);
     navy::EnginesConfig pair1;
+    pair1.blockCache().setRegionSize(4 * 1024 * 1024);
     // Second bighash: 5 pct, 640 threshold.
     pair1.bigHash().setSizePctAndMaxItemSize(5, 640);
     cfg.addEnginePair(std::move(pair1));
@@ -173,6 +287,7 @@ TEST(NavySetupTest, EnginesSetup) {
     // 20MB block cache 0.
     cfg.blockCache().setSize(20 * 1024 * 1024);
     navy::EnginesConfig pair1;
+    pair1.blockCache().setRegionSize(4 * 1024 * 1024);
     // Second bighash: 5 pct, 640 threshold.
     pair1.bigHash().setSizePctAndMaxItemSize(5, 640);
     // Will throw. Set size for the second block cache.

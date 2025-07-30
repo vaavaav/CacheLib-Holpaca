@@ -13,8 +13,11 @@
 # limitations under the License.
 name: build-cachelib-centos-8-1
 on:
-#  push:
+  push:
+    tags:
+      - 'v*'
   pull_request:
+  workflow_dispatch:
   schedule:
      - cron:  '0 11 * * 1,3,5'
 jobs:
@@ -50,8 +53,10 @@ jobs:
           cd /etc/yum.repos.d/
           sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*
           sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*
-      - name: "install sudo,git"
-        run: dnf install -y sudo git cmake gcc
+      - name: "install sudo,git,gcc-11"
+        run: |
+          dnf install -y sudo git cmake gcc-toolset-11-gcc gcc-toolset-11-gcc-c++
+          update-alternatives --install /usr/bin/gcc gcc /opt/rh/gcc-toolset-11/root/usr/bin/gcc 110 --slave /usr/bin/g++ g++ /opt/rh/gcc-toolset-11/root/usr/bin/g++ --slave /usr/bin/gcov gcov /opt/rh/gcc-toolset-11/root/usr/bin/gcov --slave /usr/bin/gcc-ar gcc-ar /opt/rh/gcc-toolset-11/root/usr/bin/gcc-ar --slave /usr/bin/gcc-ranlib gcc-ranlib /opt/rh/gcc-toolset-11/root/usr/bin/gcc-ranlib  --slave /usr/bin/cpp cpp /opt/rh/gcc-toolset-11/root/usr/bin/cpp
       - name: "System Information"
         run: |
           echo === uname ===
@@ -73,7 +78,9 @@ jobs:
           echo === gcc -v ===
           gcc -v
       - name: "checkout sources"
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
+      - name: "Add workspace as a safe directory"
+        run: git config --system --add safe.directory $GITHUB_WORKSPACE
       - name: "Install Prerequisites"
         run: ./contrib/build.sh -S -B
       - name: "Test: update-submodules"
@@ -96,12 +103,16 @@ jobs:
         run: ./contrib/build-package.sh -j -v -i fizz
       - name: "Install dependency: wangle"
         run: ./contrib/build-package.sh -j -v -i wangle
+      - name: "Install dependency: mvfst"
+        run: ./contrib/build-package.sh -j -v -i mvfst
       - name: "Install dependency: fbthrift"
         run: ./contrib/build-package.sh -j -v -i fbthrift
       - name: "build CacheLib"
-        # Build cachelib in debug mode (-d) and with all tests (-t)
-        run: ./contrib/build-package.sh -j -v -i -d -t cachelib
-      - uses: actions/upload-artifact@v2
+        # Build cachelib in debug mode (-d)
+        run: ./contrib/build-package.sh -j -v -i -d cachelib
+      - name: "run cachebench"
+        run: ./opt/cachelib/bin/cachebench --json_test_config ./opt/cachelib/test_configs/simple_test.json
+      - uses: actions/upload-artifact@v3
         if: failure()
         with:
           name: cachelib-cmake-logs

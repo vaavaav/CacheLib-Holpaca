@@ -27,6 +27,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <typeinfo>
 #include <vector>
 
 #include "cachelib/allocator/CacheAllocator.h"
@@ -36,8 +37,10 @@
 #include "cachelib/experimental/objcache2/ObjectCacheBase.h"
 #include "cachelib/experimental/objcache2/ObjectCacheConfig.h"
 #include "cachelib/experimental/objcache2/ObjectCacheSizeController.h"
+#include "cachelib/experimental/objcache2/ObjectCacheSizeDistTracker.h"
 #include "cachelib/experimental/objcache2/persistence/Persistence.h"
 #include "cachelib/experimental/objcache2/persistence/gen-cpp2/persistent_data_types.h"
+#include "cachelib/experimental/objcache2/util/ThreadMemoryTracker.h"
 
 namespace facebook {
 namespace cachelib {
@@ -66,8 +69,15 @@ struct ObjectCacheDestructorData {
   ObjectCacheDestructorData(ObjectCacheDestructorContext ctx,
                             uintptr_t ptr,
                             const KAllocation::Key& k,
-                            uint32_t expiryTime)
-      : context(ctx), objectPtr(ptr), key(k), expiryTime(expiryTime) {}
+                            uint32_t expiryTime,
+                            uint32_t creationTime,
+                            uint32_t lastAccessTime)
+      : context(ctx),
+        objectPtr(ptr),
+        key(k),
+        expiryTime(expiryTime),
+        creationTime(creationTime),
+        lastAccessTime(lastAccessTime) {}
 
   // release the evicted/removed/expired object memory
   template <typename T>
@@ -86,6 +96,12 @@ struct ObjectCacheDestructorData {
 
   // the expiry time of the object
   uint32_t expiryTime;
+
+  // the creation time of the object
+  uint32_t creationTime;
+
+  // the last time this object was accessed
+  uint32_t lastAccessTime;
 };
 
 template <typename AllocatorT>
@@ -135,6 +151,7 @@ class ObjectCache : public ObjectCacheBase<AllocatorT> {
   using ItemDestructor = std::function<void(ObjectCacheDestructorData)>;
   using Key = KAllocation::Key;
   using Config = ObjectCacheConfig<ObjectCache<AllocatorT>>;
+  using EvictionPolicyConfig = typename AllocatorT::MMType::Config;
   using Item = ObjectCacheItem;
   using Serializer = ObjectSerializer<ObjectCache<AllocatorT>>;
   using Deserializer = ObjectDeserializer<ObjectCache<AllocatorT>>;
@@ -142,6 +159,8 @@ class ObjectCache : public ObjectCacheBase<AllocatorT> {
   using DeserializeCb = std::function<bool(Deserializer)>;
   using Persistor = Persistor<ObjectCache<AllocatorT>>;
   using Restorer = Restorer<ObjectCache<AllocatorT>>;
+  using EvictionIterator = typename AllocatorT::EvictionIterator;
+  using AccessIterator = typename AllocatorT::AccessIterator;
 
   enum class AllocStatus { kSuccess, kAllocError, kKeyAlreadyExists };
 
@@ -223,7 +242,9 @@ class ObjectCache : public ObjectCacheBase<AllocatorT> {
 
   // Remove an object from cache by its key. No-op if object doesn't exist.
   // @param key   the key to the object.
-  void remove(folly::StringPiece key);
+  //
+  // @return false if the key is not found in object-cache
+  bool remove(folly::StringPiece key);
 
   // Persist all non-expired objects in the cache if cache persistence is
   // enabled.
@@ -251,6 +272,11 @@ class ObjectCache : public ObjectCacheBase<AllocatorT> {
   // Get direct access to the interal CacheAllocator.
   // This is only used in tests.
   AllocatorT& getL1Cache() { return *this->l1Cache_; }
+
+  // Get an iterator to iterate over all items in object-cache.
+  AccessIterator begin() { return this->l1Cache_->begin(); }
+
+  AccessIterator end() { return this->l1Cache_->end(); }
 
   // Get the default l1 allocation size in bytes.
   static uint32_t getL1AllocSize(uint8_t maxKeySizeBytes);
@@ -294,6 +320,32 @@ class ObjectCache : public ObjectCacheBase<AllocatorT> {
     return getReadHandleRefInternal<T>(object)->getConfiguredTTL();
   }
 
+  // Get the last access timestamp of the object
+  // @param  object   object shared pointer returned from ObjectCache APIs
+  //
+  // @return the last accessed timestamp in seconds of the object
+  //         0 if object is nullptr
+  template <typename T>
+  uint32_t getLastAccessTimeSec(std::shared_ptr<T>& object) {
+    if (object == nullptr) {
+      return 0;
+    }
+    return getReadHandleRefInternal<T>(object)->getLastAccessTime();
+  }
+
+  // Get the creation timestamp of the object
+  // @param  object   object shared pointer returned from ObjectCache APIs
+  //
+  // @return the create timestamp in seconds of the object
+  //         0 if object is nullptr
+  template <typename T>
+  uint32_t getCreationTimeSec(std::shared_ptr<T>& object) {
+    if (object == nullptr) {
+      return 0;
+    }
+    return getReadHandleRefInternal<T>(object)->getCreationTime();
+  }
+
   // Update the expiry timestamp of an object
   //
   // @param  object         object shared pointer returned from ObjectCache APIs
@@ -324,6 +376,71 @@ class ObjectCache : public ObjectCacheBase<AllocatorT> {
     return getWriteHandleRefInternal<T>(object)->extendTTL(ttl);
   }
 
+  // Mutate object and update the object size
+  // When size-awareness is enabled, users must call this API to mutate the
+  // object. Otherwise, we won't be able to track the updated object size
+  //
+  // @param  object       shared pointer of the object to be mutated (must be
+  //                      fetched from ObjectCache APIs)
+  // @param  mutateCb     callback containing the mutation logic
+  template <typename T>
+  void mutateObject(const std::shared_ptr<T>& object,
+                    std::function<void()> mutateCb);
+
+  // Get the size of the object
+  //
+  // @param  object       object shared pointer returned from ObjectCache APIs
+  //
+  // @return the object size if size-awareness is enabled
+  //         0 otherwise
+  template <typename T>
+  size_t getObjectSize(const std::shared_ptr<T>& object) const {
+    if (!object) {
+      return 0;
+    }
+    return reinterpret_cast<const ObjectCacheItem*>(
+               getReadHandleRefInternal<T>(object)->getMemory())
+        ->objectSize;
+  }
+
+  size_t getObjectSize(AccessIterator& itr) const {
+    if (!itr.asHandle()) {
+      return 0;
+    }
+    return reinterpret_cast<const ObjectCacheItem*>(itr.asHandle()->getMemory())
+        ->objectSize;
+  }
+
+  // Update the object size without updating the object itself.
+  // This is useful when object has been changed, although it's not changed
+  // by mutateObject.
+  //
+  // @param  object       shared pointer of the object whose size is being
+  //                      updated (must be fetched from ObjectCache APIs)
+  // @param  newSize      new object size
+  //
+  // @return boolean indicating whether the object size was successfully updated
+  template <typename T>
+  bool updateObjectSize(const std::shared_ptr<T>& object, size_t newSize);
+
+  // Stop all workers
+  //
+  // @return true if all workers have been successfully stopped
+  bool stopAllWorkers(std::chrono::seconds timeout = std::chrono::seconds{0}) {
+    bool success = true;
+    success &=
+        util::stopPeriodicWorker(kSizeControllerName, sizeController_, timeout);
+    success &= util::stopPeriodicWorker(
+        kSizeDistTrackerName, sizeDistTracker_, timeout);
+    success &= this->l1Cache_->stopWorkers(timeout);
+    return success;
+  }
+
+  // No-op for workers that are already running. Typically user uses this in
+  // conjunction with `config.setDelayCacheWorkersStart()` to avoid
+  // initialization ordering issues with user callback for cachelib's workers.
+  void startCacheWorkers();
+
  protected:
   // Serialize cache allocator config for exporting to Scuba
   std::map<std::string, std::string> serializeConfigParams() const override;
@@ -331,13 +448,15 @@ class ObjectCache : public ObjectCacheBase<AllocatorT> {
  private:
   // Minimum alloc size in bytes for l1 cache.
   static constexpr uint32_t kL1AllocSizeMin = 64;
+  static constexpr const char* kPlaceholderKey = "_cl_ph";
 
-  // Generate the key for the ith placeholder.
-  static std::string getPlaceHolderKey(size_t i) {
-    return fmt::format("_cl_ph_{}", i);
-  }
+  // Names of periodic workers
+  static constexpr folly::StringPiece kSizeControllerName{"SizeController"};
+  static constexpr folly::StringPiece kSizeDistTrackerName{"SizeDistTracker"};
 
   void init();
+
+  void initWorkers();
 
   // Allocate an item handle from the interal cache allocator. This item's
   // storage is used to cache pointer to objects in object-cache.
@@ -348,21 +467,10 @@ class ObjectCache : public ObjectCacheBase<AllocatorT> {
   // Allocate the placeholder and add it to the placeholder vector.
   //
   // @return true if the allocation is successful
-  bool allocatePlaceholder(std::string key);
+  bool allocatePlaceholder();
 
-  // Start size controller
-  //
-  // @param interval   the period this worker fires
-  // @param config     throttling config
-  // @return true if size controller has been successfully started
-  bool startSizeController(std::chrono::milliseconds interval,
-                           const util::Throttler::Config& config);
-
-  // Stop size controller
-  //
-  // @return true if size controller has been successfully stopped
-  bool stopSizeController(std::chrono::seconds timeout = std::chrono::seconds{
-                              0});
+  // Returns the total number of placeholders
+  size_t getNumPlaceholders() const { return placeholders_.size(); }
 
   // Get a ReadHandle reference from the object shared_ptr
   template <typename T>
@@ -378,7 +486,7 @@ class ObjectCache : public ObjectCacheBase<AllocatorT> {
   // Get a WriteHandle reference from the object shared_ptr
   template <typename T>
   typename AllocatorT::WriteHandle& getWriteHandleRefInternal(
-      std::shared_ptr<T>& object) {
+      const std::shared_ptr<T>& object) {
     auto* deleter = std::get_deleter<Deleter<T>>(object);
     XDCHECK(deleter != nullptr);
     auto& hdl = deleter->getWriteHandleRef();
@@ -386,11 +494,13 @@ class ObjectCache : public ObjectCacheBase<AllocatorT> {
     return hdl;
   }
 
+  EvictionIterator getEvictionIterator(PoolId pid) const noexcept {
+    auto& mmContainer = this->l1Cache_->getMMContainer(pid, 0 /* classId */);
+    return mmContainer.getEvictionIterator();
+  }
+
   // Config passed to the cache.
   Config config_{};
-
-  // Number of shards (LRUs) to lessen the contention on L1 cache
-  size_t l1NumShards_{};
 
   // They take up space so we can control exact number of items in cache
   std::vector<typename AllocatorT::WriteHandle> placeholders_;
@@ -398,6 +508,10 @@ class ObjectCache : public ObjectCacheBase<AllocatorT> {
   // A periodic worker that controls the total object size to be limited by
   // cache size limit
   std::unique_ptr<ObjectCacheSizeController<AllocatorT>> sizeController_;
+
+  // A periodic worker that tracks the object size distribution stats.
+  std::unique_ptr<ObjectCacheSizeDistTracker<ObjectCache<AllocatorT>>>
+      sizeDistTracker_;
 
   // Actual object size in total
   std::atomic<size_t> totalObjectSizeBytes_{0};

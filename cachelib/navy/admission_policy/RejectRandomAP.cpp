@@ -22,9 +22,7 @@
 
 #include "cachelib/navy/common/Utils.h"
 
-namespace facebook {
-namespace cachelib {
-namespace navy {
+namespace facebook::cachelib::navy {
 RejectRandomAP::Config& RejectRandomAP::Config::validate() {
   if (!between(probability, 0, 1)) {
     throw std::invalid_argument{
@@ -41,7 +39,9 @@ RejectRandomAP::RejectRandomAP(Config&& config, ValidConfigTag)
   XLOGF(INFO, "RejectRandomAP: probability {}", probability_);
 }
 
-bool RejectRandomAP::accept(HashedKey /* hk */, BufferView /* value */) {
+bool RejectRandomAP::accept(HashedKey /* hk */,
+                            BufferView /* value */,
+                            uint64_t /* writeSize */) {
   if (probability_ == 1) {
     // Code in the "else" block doesn't produce correct results for
     // probability 1. Return true explicitly.
@@ -50,6 +50,4 @@ bool RejectRandomAP::accept(HashedKey /* hk */, BufferView /* value */) {
     return fdiv(rg_(), rg_.max()) < probability_;
   }
 }
-} // namespace navy
-} // namespace cachelib
-} // namespace facebook
+} // namespace facebook::cachelib::navy

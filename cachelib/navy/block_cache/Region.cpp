@@ -16,13 +16,19 @@
 
 #include "cachelib/navy/block_cache/Region.h"
 
-namespace facebook {
-namespace cachelib {
-namespace navy {
-bool Region::readyForReclaim() {
-  std::lock_guard<std::mutex> l{lock_};
+#include "cachelib/navy/common/NavyThread.h"
+
+namespace facebook::cachelib::navy {
+
+bool Region::readyForReclaim(bool wait) {
+  std::unique_lock<TimedMutex> l{lock_};
   flags_ |= kBlockAccess;
-  return activeOpenLocked() == 0;
+  bool ready = false;
+  while (!(ready = (activeOpenLocked() == 0UL)) && wait) {
+    cond_.wait(l);
+  }
+
+  return ready;
 }
 
 uint32_t Region::activeOpenLocked() {
@@ -31,7 +37,7 @@ uint32_t Region::activeOpenLocked() {
 
 std::tuple<RegionDescriptor, RelAddress> Region::openAndAllocate(
     uint32_t size) {
-  std::lock_guard<std::mutex> l{lock_};
+  std::lock_guard<TimedMutex> l{lock_};
   XDCHECK(!(flags_ & kBlockAccess));
   if (!canAllocateLocked(size)) {
     return std::make_tuple(RegionDescriptor{OpenStatus::Error}, RelAddress{});
@@ -43,9 +49,13 @@ std::tuple<RegionDescriptor, RelAddress> Region::openAndAllocate(
 }
 
 RegionDescriptor Region::openForRead() {
-  std::lock_guard<std::mutex> l{lock_};
+  std::unique_lock<TimedMutex> l{lock_};
   if (flags_ & kBlockAccess) {
     // Region is currently in reclaim, retry later
+    if (getCurrentNavyThread()) {
+      // If we are on fiber, we can just sleep here
+      cond_.wait(l);
+    }
     return RegionDescriptor{OpenStatus::Retry};
   }
   bool physReadMode = false;
@@ -59,13 +69,26 @@ RegionDescriptor Region::openForRead() {
       OpenStatus::Ready, regionId_, physReadMode);
 }
 
+std::unique_ptr<Buffer> Region::detachBuffer() {
+  std::unique_lock<TimedMutex> l{lock_};
+  XDCHECK_NE(buffer_, nullptr);
+  while (activeInMemReaders_ != 0) {
+    cond_.wait(l);
+  }
+
+  XDCHECK_EQ(activeWriters_, 0UL);
+  auto retBuf = std::move(buffer_);
+  buffer_ = nullptr;
+  return retBuf;
+}
+
 // This function flushes the attached buffer if there are no active writers
 // by calling the callBack function that is expected to write the buffer to
 // underlying device. If there are active writers, the caller is expected
 // to call this function again.
 Region::FlushRes Region::flushBuffer(
     std::function<bool(RelAddress, BufferView)> callBack) {
-  std::unique_lock<std::mutex> lock{lock_};
+  std::unique_lock<TimedMutex> lock{lock_};
   if (activeWriters_ != 0) {
     return FlushRes::kRetryPendingWrites;
   }
@@ -81,10 +104,10 @@ Region::FlushRes Region::flushBuffer(
   return FlushRes::kSuccess;
 }
 
-bool Region::cleanupBuffer(std::function<void(RegionId, BufferView)> callBack) {
-  std::unique_lock<std::mutex> lock{lock_};
-  if (activeWriters_ != 0) {
-    return false;
+void Region::cleanupBuffer(std::function<void(RegionId, BufferView)> callBack) {
+  std::unique_lock<TimedMutex> lock{lock_};
+  while (activeWriters_ != 0) {
+    cond_.wait(lock);
   }
   if (!isCleanedupLocked()) {
     lock.unlock();
@@ -92,11 +115,10 @@ bool Region::cleanupBuffer(std::function<void(RegionId, BufferView)> callBack) {
     lock.lock();
     flags_ |= kCleanedup;
   }
-  return true;
 }
 
 void Region::reset() {
-  std::lock_guard<std::mutex> l{lock_};
+  std::lock_guard<TimedMutex> l{lock_};
   XDCHECK_EQ(activeOpenLocked(), 0U);
   priority_ = 0;
   flags_ = 0;
@@ -105,19 +127,29 @@ void Region::reset() {
   activeInMemReaders_ = 0;
   lastEntryEndOffset_ = 0;
   numItems_ = 0;
+  cond_.notifyAll();
 }
 
 void Region::close(RegionDescriptor&& desc) {
-  std::lock_guard<std::mutex> l{lock_};
+  std::lock_guard<TimedMutex> l{lock_};
   switch (desc.mode()) {
   case OpenMode::Write:
-    activeWriters_--;
+    XDCHECK_GT(activeWriters_, 0u);
+    if (--activeWriters_ == 0) {
+      cond_.notifyAll();
+    }
     break;
   case OpenMode::Read:
     if (desc.isPhysReadMode()) {
-      activePhysReaders_--;
+      XDCHECK_GT(activePhysReaders_, 0u);
+      if (--activePhysReaders_ == 0) {
+        cond_.notifyAll();
+      }
     } else {
-      activeInMemReaders_--;
+      XDCHECK_GT(activeInMemReaders_, 0u);
+      if (--activeInMemReaders_ == 0) {
+        cond_.notifyAll();
+      }
     }
     break;
   default:
@@ -149,6 +181,4 @@ void Region::readFromBuffer(uint32_t fromOffset,
   memcpy(outBuf.data(), buffer_->data() + fromOffset, outBuf.size());
 }
 
-} // namespace navy
-} // namespace cachelib
-} // namespace facebook
+} // namespace facebook::cachelib::navy

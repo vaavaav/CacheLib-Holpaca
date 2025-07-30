@@ -137,7 +137,7 @@ class MemoryPoolManager {
 
   // size in bytes of the remaining size that is not reserved for any pools.
   size_t getBytesUnReserved() const {
-    folly::SharedMutex::ReadHolder l(lock_);
+    std::shared_lock l(lock_);
     return getRemainingSizeLocked();
   }
 
@@ -168,7 +168,7 @@ class MemoryPoolManager {
   // return total memory currently advised away
   size_t getAdvisedMemorySize() const noexcept {
     size_t sum = 0;
-    folly::SharedMutex::WriteHolder l(lock_);
+    std::unique_lock l(lock_);
     for (PoolId id = 0; id < nextPoolId_; id++) {
       sum += pools_[id]->getPoolAdvisedSize();
     }

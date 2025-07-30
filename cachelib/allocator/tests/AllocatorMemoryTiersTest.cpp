@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Meta Platforms, Inc. and affiliates.
+ * Copyright (c) Meta Platforms, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,15 +14,19 @@
  * limitations under the License.
  */
 
-namespace facebook {
-namespace rust {
-namespace cachelib {
+#include "cachelib/allocator/tests/AllocatorMemoryTiersTest.h"
 
-bool enable_container_memory_monitor(LruAllocatorConfig& config) {
-  // We don't know how to do this outside Facebook, yet.
-  return false;
+namespace facebook {
+namespace cachelib {
+namespace tests {
+
+using LruAllocatorMemoryTiersTest = AllocatorMemoryTiersTest<LruAllocator>;
+
+// TODO(MEMORY_TIER): add more tests with different eviction policies
+TEST_F(LruAllocatorMemoryTiersTest, MultiTiersValid1) {
+  this->testMultiTiersValid1();
 }
 
-} // namespace cachelib
-} // namespace rust
-} // namespace facebook
+} // end of namespace tests
+} // end of namespace cachelib
+} // end of namespace facebook

@@ -122,6 +122,7 @@ uint64_t setupBigHash(const navy::BigHashConfig& bigHashConfig,
 // @param blockCacheOffset this block cache starts from this address (inclusive)
 // @param useRaidFiles if set to true, the device will setup using raid.
 // @param itemDestructorEnabled
+// @param stackSize size of the stack used by the region_manager thread
 // @param proto
 //
 // @return The end offset (exclusive) of the setup blockcache.
@@ -131,6 +132,7 @@ uint64_t setupBlockCache(const navy::BlockCacheConfig& blockCacheConfig,
                          uint64_t blockCacheOffset,
                          bool usesRaidFiles,
                          bool itemDestructorEnabled,
+                         uint32_t stackSize,
                          cachelib::navy::EnginePairProto& proto) {
   auto regionSize = blockCacheConfig.getRegionSize();
   if (regionSize != alignUp(regionSize, ioAlignSize)) {
@@ -167,12 +169,14 @@ uint64_t setupBlockCache(const navy::BlockCacheConfig& blockCacheConfig,
   } else {
     blockCache->setFifoEvictionPolicy();
   }
-  blockCache->setCleanRegionsPool(blockCacheConfig.getCleanRegions());
+  blockCache->setCleanRegionsPool(blockCacheConfig.getCleanRegions(),
+                                  blockCacheConfig.getCleanRegionThreads());
 
   blockCache->setReinsertionConfig(blockCacheConfig.getReinsertionConfig());
 
   blockCache->setNumInMemBuffers(blockCacheConfig.getNumInMemBuffers());
   blockCache->setItemDestructorEnabled(itemDestructorEnabled);
+  blockCache->setStackSize(stackSize);
   blockCache->setPreciseRemove(blockCacheConfig.isPreciseRemove());
 
   proto.setBlockCache(std::move(blockCache));
@@ -266,7 +270,7 @@ void setupCacheProtos(const navy::NavyConfig& config,
       blockCacheEndOffset = setupBlockCache(
           enginesConfig.blockCache(), blockCacheSize, ioAlignSize,
           blockCacheStartOffset, config.usesRaidFiles(), itemDestructorEnabled,
-          *enginePairProto);
+          config.getStackSize(), *enginePairProto);
     }
     if (blockCacheEndOffset > bigHashStartOffset) {
       throw std::invalid_argument(folly::sformat(
@@ -301,9 +305,21 @@ std::unique_ptr<cachelib::navy::JobScheduler> createJobScheduler(
     const navy::NavyConfig& config) {
   auto readerThreads = config.getReaderThreads();
   auto writerThreads = config.getWriterThreads();
+  auto maxNumReads = config.getMaxNumReads();
+  auto maxNumWrites = config.getMaxNumWrites();
+  auto stackSize = config.getStackSize();
   auto reqOrderShardsPower = config.getNavyReqOrderingShards();
-  return cachelib::navy::createOrderedThreadPoolJobScheduler(
-      readerThreads, writerThreads, reqOrderShardsPower);
+  if (maxNumReads == 0 && maxNumWrites == 0) {
+    return cachelib::navy::createOrderedThreadPoolJobScheduler(
+        readerThreads, writerThreads, reqOrderShardsPower);
+  }
+
+  return cachelib::navy::createNavyRequestScheduler(readerThreads,
+                                                    writerThreads,
+                                                    maxNumReads,
+                                                    maxNumWrites,
+                                                    stackSize,
+                                                    reqOrderShardsPower);
 }
 } // namespace
 
@@ -312,25 +328,30 @@ std::unique_ptr<cachelib::navy::Device> createDevice(
     std::shared_ptr<navy::DeviceEncryptor> encryptor) {
   auto blockSize = config.getBlockSize();
   auto maxDeviceWriteSize = config.getDeviceMaxWriteSize();
+  if (config.usesRaidFiles() || config.usesSimpleFile()) {
+    auto stripeSize = 0;
+    auto fileSize = config.getFileSize();
+    std::vector<std::string> filePaths;
+    if (config.usesSimpleFile()) {
+      filePaths.emplace_back(config.getFileName());
+    } else {
+      stripeSize = getRegionSize(config);
+      filePaths = config.getRaidPaths();
+      fileSize = alignDown(fileSize, stripeSize);
+    }
 
-  if (config.usesRaidFiles()) {
-    auto stripeSize = getRegionSize(config);
-    return cachelib::navy::createRAIDDevice(
-        config.getRaidPaths(),
-        alignDown(config.getFileSize(), stripeSize),
+    return cachelib::navy::createFileDevice(
+        filePaths,
+        fileSize,
         config.getTruncateFile(),
         blockSize,
         stripeSize,
+        maxDeviceWriteSize > 0 ? alignDown(maxDeviceWriteSize, blockSize) : 0,
+        config.getIoEngine(),
+        config.getQDepth(),
+        config.isFDPEnabled(),
         std::move(encryptor),
-        maxDeviceWriteSize > 0 ? alignDown(maxDeviceWriteSize, blockSize) : 0);
-  } else if (config.usesSimpleFile()) {
-    return cachelib::navy::createFileDevice(
-        config.getFileName(),
-        config.getFileSize(),
-        config.getTruncateFile(),
-        blockSize,
-        std::move(encryptor),
-        maxDeviceWriteSize > 0 ? alignDown(maxDeviceWriteSize, blockSize) : 0);
+        config.getExclusiveOwner());
   } else {
     return cachelib::navy::createMemoryDevice(config.getFileSize(),
                                               std::move(encryptor), blockSize);
@@ -352,6 +373,7 @@ std::unique_ptr<navy::AbstractCache> createNavyCache(
   proto->setJobScheduler(createJobScheduler(config));
   proto->setMaxConcurrentInserts(config.getMaxConcurrentInserts());
   proto->setMaxParcelMemory(megabytesToBytes(config.getMaxParcelMemoryMB()));
+  proto->setUseEstimatedWriteSize(config.getUseEstimatedWriteSize());
   setAdmissionPolicy(config, *proto);
   proto->setExpiredCheck(checkExpired);
   proto->setDestructorCallback(destructorCb);

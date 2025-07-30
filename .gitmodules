@@ -1,18 +1,15 @@
+[submodule "mvfst"]
+       path = cachelib/external/mvfst
+       url = https://github.com/facebook/mvfst
+[submodule "fizz"]
+	path = cachelib/external/fizz
+	url = https://github.com/facebookincubator/fizz
 [submodule "fbthrift"]
 	path = cachelib/external/fbthrift
 	url = https://github.com/facebook/fbthrift
 [submodule "folly"]
 	path = cachelib/external/folly
 	url = https://github.com/facebook/folly
-[submodule "fizz"]
-	path = cachelib/external/fizz
-	url = https://github.com/facebookincubator/fizz
 [submodule "wangle"]
 	path = cachelib/external/wangle
 	url = https://github.com/facebook/wangle
-[submodule "zstd"]
-	path = cachelib/external/zstd
-	url = https://github.com/facebook/zstd
-[submodule "flows"]
-	path = cachelib/external/flows
-	url = https://gitfront.io/r/vaavaav/davMvwJ8jxJv/flows-cpp.git

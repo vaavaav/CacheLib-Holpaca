@@ -34,7 +34,7 @@ The sections below list out the `config setters` in the order of the config they
 
 Configs to initialize NVM cache lives in `CacheAllocatorConfig::nvmConfig` and a majority of them are still set via CacheAllocatorConfig's setter functions. Below is the list of setters in CacheAllocatorConfig that sets nvmConfig:
 
-* `enableCachePersistence`: cache directory is used to initialize NVM cache as well.*
+* `enableCachePersistence`: cache directory is used to initialize NVM cache as well.
 * `setDropNvmCacheOnShmNew`: This flag is used to determine whether the NVM cache would start truncated.
 * `enableNvmCacheEncryption`: This sets CacheAllocatorConfig::nvmConfig::deviceEncryptor.
 * `enableNvmCacheTruncateAllocSize`: This sets CacheAllocatorConfig::nvmConfig::truncateItemToOriginalAllocSizeInNvm.

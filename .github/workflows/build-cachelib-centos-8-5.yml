@@ -13,8 +13,11 @@
 # limitations under the License.
 name: build-cachelib-centos-8.5
 on:
-#   push:
+  push:
+    tags:
+      - 'v*'
   pull_request:
+  workflow_dispatch:
   schedule:
      - cron:  '0 9 * * *'
 jobs:
@@ -72,7 +75,9 @@ jobs:
           echo === gcc -v ===
           gcc -v
       - name: "checkout sources"
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
+      - name: "Add workspace as a safe directory"
+        run: git config --system --add safe.directory $GITHUB_WORKSPACE
       - name: "Install Prerequisites"
         run: ./contrib/build.sh -S -B
       - name: "Test: update-submodules"
@@ -95,12 +100,16 @@ jobs:
         run: ./contrib/build-package.sh -j -v -i fizz
       - name: "Install dependency: wangle"
         run: ./contrib/build-package.sh -j -v -i wangle
+      - name: "Install dependency: mvfst"
+        run: ./contrib/build-package.sh -j -v -i mvfst
       - name: "Install dependency: fbthrift"
         run: ./contrib/build-package.sh -j -v -i fbthrift
       - name: "build CacheLib"
-        # Build cachelib in debug mode (-d) and with all tests (-t)
-        run: ./contrib/build-package.sh -j -v -i -d -t cachelib
-      - uses: actions/upload-artifact@v2
+        # Build cachelib in debug mode (-d)
+        run: ./contrib/build-package.sh -j -v -i -d cachelib
+      - name: "run cachebench"
+        run: ./opt/cachelib/bin/cachebench --json_test_config ./opt/cachelib/test_configs/simple_test.json
+      - uses: actions/upload-artifact@v3
         if: failure()
         with:
           name: cachelib-cmake-logs

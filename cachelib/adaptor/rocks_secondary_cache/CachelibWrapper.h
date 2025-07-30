@@ -18,6 +18,7 @@
 #include "cachelib/allocator/CacheAllocator.h"
 #include "cachelib/facebook/admin/CacheAdmin.h"
 #include "rocksdb/secondary_cache.h"
+#include "rocksdb/statistics.h"
 #include "rocksdb/types.h"
 #include "rocksdb/version.h"
 
@@ -105,21 +106,27 @@ class RocksCachelibWrapper : public rocksdb::SecondaryCache {
 
   const char* Name() const override { return "RocksCachelibWrapper"; }
 
-  rocksdb::Status Insert(
-      const rocksdb::Slice& key,
-      void* value,
-      const rocksdb::Cache::CacheItemHelper* helper) override;
+  rocksdb::Status Insert(const rocksdb::Slice& key,
+                         void* value,
+                         const rocksdb::Cache::CacheItemHelper* helper,
+                         bool force_erase) override;
+
+  rocksdb::Status InsertSaved(const rocksdb::Slice& /*key*/,
+                              const rocksdb::Slice& /*saved*/,
+                              rocksdb::CompressionType /*type*/,
+                              rocksdb::CacheTier /*source*/) override {
+    return rocksdb::Status::NotSupported();
+  }
 
   std::unique_ptr<rocksdb::SecondaryCacheResultHandle> Lookup(
       const rocksdb::Slice& key,
-#if ROCKSDB_MAJOR > 7 || (ROCKSDB_MAJOR == 7 && ROCKSDB_MINOR >= 10)
       const rocksdb::Cache::CacheItemHelper* helper,
       rocksdb::Cache::CreateContext* create_context,
-#else
-      const rocksdb::Cache::CreateCallback& create_cb,
-#endif
       bool wait,
       bool advise_erase,
+#if ROCKSDB_MAJOR > 8 || (ROCKSDB_MAJOR == 8 && ROCKSDB_MINOR > 9)
+      rocksdb::Statistics* stats,
+#endif
       bool& is_in_sec_cache) override;
 
   bool SupportForceErase() const override { return false; }

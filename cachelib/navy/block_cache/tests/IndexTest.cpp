@@ -20,10 +20,7 @@
 
 #include "cachelib/navy/block_cache/Index.h"
 
-namespace facebook {
-namespace cachelib {
-namespace navy {
-namespace tests {
+namespace facebook::cachelib::navy::tests {
 TEST(Index, Recovery) {
   Index index;
   std::vector<std::pair<uint64_t, uint32_t>> log;
@@ -34,7 +31,7 @@ TEST(Index, Recovery) {
       uint64_t key = i << 32 | j;
       uint32_t val = j + i;
       index.insert(key, val, 0);
-      log.push_back(std::make_pair(key, val));
+      log.emplace_back(key, val);
     }
   }
 
@@ -186,7 +183,7 @@ TEST(Index, ThreadSafe) {
 
   std::vector<std::thread> threads;
   for (int i = 0; i < 200; i++) {
-    threads.emplace_back(std::thread(lookup));
+    threads.emplace_back(lookup);
   }
 
   for (auto& t : threads) {
@@ -197,7 +194,4 @@ TEST(Index, ThreadSafe) {
   EXPECT_EQ(200, index.peek(key).currentHits());
 }
 
-} // namespace tests
-} // namespace navy
-} // namespace cachelib
-} // namespace facebook
+} // namespace facebook::cachelib::navy::tests

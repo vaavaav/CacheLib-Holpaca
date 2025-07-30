@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
+#include <folly/fibers/Baton.h>
 #include <folly/io/async/EventBase.h>
-#include <folly/synchronization/Baton.h>
 #include <gmock/gmock.h>
 
 #include <algorithm>
@@ -80,6 +80,9 @@ struct TestAllocator {
 
   void adjustHandleCountForThread_private(int i) { tlRef_.tlStats() += i; }
 
+  // This is no-op. It's just used to construct a ItemHandle with wait-context.
+  void bumpHandleWaitBlocks() {}
+
   util::FastStats<int> tlRef_;
 };
 } // namespace
@@ -120,7 +123,7 @@ TEST(ItemHandleTest, WaitContext_set_wait) {
   TestItem k;
   auto hdl = t.getHandle();
 
-  folly::Baton<> run;
+  folly::fibers::Baton run;
   auto thr = std::thread([&]() {
     run.wait();
     t.setHandle(hdl, &k);
@@ -139,8 +142,8 @@ TEST(ItemHandleTest, WaitContext_set_waitSemiFuture) {
   TestItem k;
   TestReadHandle hdl = t.getHandle();
 
-  folly::Baton<> run;
-  folly::Baton<> refCountChecked;
+  folly::fibers::Baton run;
+  folly::fibers::Baton refCountChecked;
   auto thr = std::thread([&]() {
     run.wait();
     t.setHandle(hdl, &k);
@@ -261,7 +264,7 @@ TEST(ItemHandleTest, ReleaseWithWaitContext) {
     EXPECT_CALL(t, release(&k, false)).WillOnce(testing::Return());
 
     auto hdl = t.getHandle();
-    folly::Baton<> setThreadStarted;
+    folly::fibers::Baton setThreadStarted;
     std::thread setThread{[&] {
       setThreadStarted.post();
       std::this_thread::yield();

@@ -16,8 +16,9 @@
 
 #pragma once
 
-#include <mutex>
+#include <folly/fibers/TimedMutex.h>
 
+#include "cachelib/common/ConditionVariable.h"
 #include "cachelib/navy/block_cache/Types.h"
 #include "cachelib/navy/common/Types.h"
 #include "cachelib/navy/serialization/Serialization.h"
@@ -25,6 +26,8 @@
 namespace facebook {
 namespace cachelib {
 namespace navy {
+using folly::fibers::TimedMutex;
+
 enum class OpenMode {
   // Not opened
   None,
@@ -73,12 +76,12 @@ class Region {
   Region(const Region&) = delete;
   Region& operator=(const Region&) = delete;
 
-  // Immediately block future accesses to this region. Return true if
-  // there are no pending operation to this region, false otherwise.
-  // It is safe to repeatedly call this until success. Note that it is
-  // only safe for one thread to call this, as we assume only a single
-  // thread can be running region reclaim at a time.
-  bool readyForReclaim();
+  // Immediately block future accesses to this region and (optionally)
+  // wait on condition variable for all active readers and writers to be
+  // released. Return true if there are no pending operation to this region,
+  // false otherwise.
+  // @param wait  whether to wait or not (only for test cases)
+  bool readyForReclaim(bool wait);
 
   // Opens this region for write and allocate a slot of @size.
   // Fail if there's insufficient space.
@@ -97,32 +100,32 @@ class Region {
   // Assigns this region a priority. The meaning of priority
   // is dependent on the eviction policy we choose.
   void setPriority(uint16_t priority) {
-    std::lock_guard<std::mutex> l{lock_};
+    std::lock_guard<TimedMutex> l{lock_};
     priority_ = priority;
   }
 
   // Gets the priority this region is assigned.
   uint16_t getPriority() const {
-    std::lock_guard<std::mutex> l{lock_};
+    std::lock_guard<TimedMutex> l{lock_};
     return priority_;
   }
 
   // Gets the end offset of last slot added to this region.
   uint32_t getLastEntryEndOffset() const {
-    std::lock_guard<std::mutex> l{lock_};
+    std::lock_guard<TimedMutex> l{lock_};
     return lastEntryEndOffset_;
   }
 
   // Gets the number of items in this region.
   uint32_t getNumItems() const {
-    std::lock_guard<std::mutex> l{lock_};
+    std::lock_guard<TimedMutex> l{lock_};
     return numItems_;
   }
 
   // If this region is actively used, then the fragmentation
   // is the bytes at the end of the region that's not used.
   uint32_t getFragmentationSize() const {
-    std::lock_guard<std::mutex> l{lock_};
+    std::lock_guard<TimedMutex> l{lock_};
     if (numItems_) {
       return regionSize_ - lastEntryEndOffset_;
     }
@@ -148,19 +151,9 @@ class Region {
     return buffer_.get() != nullptr;
   }
 
-  // Detaches the attached buffer and returns it only if there are no
-  // active readers, otherwise returns nullptr.
-  std::unique_ptr<Buffer> detachBuffer() {
-    std::lock_guard l{lock_};
-    XDCHECK_NE(buffer_, nullptr);
-    if (activeInMemReaders_ == 0) {
-      XDCHECK_EQ(activeWriters_, 0UL);
-      auto retBuf = std::move(buffer_);
-      buffer_ = nullptr;
-      return retBuf;
-    }
-    return nullptr;
-  }
+  // Detaches the attached buffer and returns it.
+  // This could block if there are active readers
+  std::unique_ptr<Buffer> detachBuffer();
 
   // Flushes the attached buffer by calling the callBack function.
   // The callBack function is expected to write to the underlying device.
@@ -174,7 +167,7 @@ class Region {
   FlushRes flushBuffer(std::function<bool(RelAddress, BufferView)> callBack);
 
   // Cleans up the attached buffer by calling the callBack function.
-  bool cleanupBuffer(std::function<void(RegionId, BufferView)> callBack);
+  void cleanupBuffer(std::function<void(RegionId, BufferView)> callBack);
 
   // Marks the bit to indicate pending flush status.
   void setPendingFlush() {
@@ -238,7 +231,8 @@ class Region {
   uint32_t numItems_{0};
   std::unique_ptr<Buffer> buffer_{nullptr};
 
-  mutable std::mutex lock_;
+  mutable TimedMutex lock_{TimedMutex::Options(false)};
+  mutable util::ConditionVariable cond_;
 };
 
 // RegionDescriptor. Contains status of the open, region id and the open mode.

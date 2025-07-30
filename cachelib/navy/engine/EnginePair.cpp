@@ -18,9 +18,7 @@
 
 #include "cachelib/navy/engine/NoopEngine.h"
 
-namespace facebook {
-namespace cachelib {
-namespace navy {
+namespace facebook::cachelib::navy {
 
 EnginePair::EnginePair(std::unique_ptr<Engine> smallItemCache,
                        std::unique_ptr<Engine> largeItemCache,
@@ -51,6 +49,10 @@ bool EnginePair::couldExist(HashedKey key) const {
     lookupCount_.inc();
   }
   return couldExist;
+}
+
+uint64_t EnginePair::estimateWriteSize(HashedKey hk, BufferView value) const {
+  return select(hk, value).first.estimateWriteSize(hk, value);
 }
 
 Status EnginePair::lookupSync(HashedKey hk, Buffer& value) const {
@@ -101,7 +103,7 @@ Status EnginePair::insertInternal(HashedKey hk,
     ioErrorCount_.inc();
     break;
   default:;
-  };
+  }
 
   return status;
 }
@@ -233,6 +235,11 @@ void EnginePair::scheduleRemove(HashedKey hk, RemoveCallback cb) {
       hk.keyHash());
 }
 
+void EnginePair::drain() {
+  smallItemCache_->drain();
+  largeItemCache_->drain();
+}
+
 void EnginePair::flush() {
   smallItemCache_->flush();
   largeItemCache_->flush();
@@ -319,7 +326,4 @@ void EnginePair::validate() {
   }
 }
 
-} // namespace navy
-} // namespace cachelib
-
-} // namespace facebook
+} // namespace facebook::cachelib::navy

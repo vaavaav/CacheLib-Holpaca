@@ -24,8 +24,7 @@
 
 #include "cachelib/allocator/Util.h"
 
-namespace facebook {
-namespace cachelib {
+namespace facebook::cachelib {
 
 PoolOptimizeContext
 MarginalHitsOptimizeStrategy::pickVictimAndReceiverFromRankings(
@@ -56,7 +55,7 @@ MarginalHitsOptimizeStrategy::getTailHitsAndUpdate(const PoolStats& poolStats,
                                                    PoolId pid) {
   std::unordered_map<ClassId, uint64_t> tailHits;
   const auto& cacheStats = poolStats.cacheStats;
-  for (auto it : accuTailHitsRegularPool[pid]) {
+  for (auto& it : accuTailHitsRegularPool[pid]) {
     XDCHECK(cacheStats.find(it.first) != cacheStats.end());
     tailHits[it.first] =
         cacheStats.at(it.first).containerStat.numTailAccesses - it.second;
@@ -150,5 +149,4 @@ MarginalHitsOptimizeStrategy::pickVictimAndReceiverCompactCachesImpl(
       compactCacheState_, validVictim, validReceiver);
 }
 
-} // namespace cachelib
-} // namespace facebook
+} // namespace facebook::cachelib

@@ -68,7 +68,8 @@ class BlockCacheProto {
 
   // (Optional) How many clean regions GC should (try to) maintain in the pool.
   // Default: 1
-  virtual void setCleanRegionsPool(uint32_t n) = 0;
+  virtual void setCleanRegionsPool(uint32_t cleanRegions,
+                                   uint32_t cleanRegionThreads) = 0;
 
   // (Optional) Number of In memory buffers to maintain. Default: 0
   virtual void setNumInMemBuffers(uint32_t numInMemBuffers) = 0;
@@ -79,6 +80,9 @@ class BlockCacheProto {
 
   // (Optional) Set if the item destructor feature is enabled.
   virtual void setItemDestructorEnabled(bool itemDestructorEnabled) = 0;
+
+  // (Optional) Set the fiber stack size of region_manager thread
+  virtual void setStackSize(uint32_t stackSize) = 0;
 
   // (Optional) Set if the preciseRemove flag.
   virtual void setPreciseRemove(bool preciseRemove) = 0;
@@ -132,6 +136,9 @@ class CacheProto {
   // Set maximum parcel memory for all queues inserts. Parcel is a buffer with
   // key and value.
   virtual void setMaxParcelMemory(uint64_t limit) = 0;
+
+  // Set whether to use write size (instead of ) for admission policy.
+  virtual void setUseEstimatedWriteSize(bool useEstimatedWriteSize) = 0;
 
   // Sets device that engine will use.
   virtual void setDevice(std::unique_ptr<Device> device) = 0;
@@ -190,41 +197,6 @@ std::unique_ptr<CacheProto> createCacheProto();
 // Creates Cache object.
 // @param proto   cache object prototype
 std::unique_ptr<AbstractCache> createCache(std::unique_ptr<CacheProto> proto);
-
-// Creates a direct IO RAID0 Device.
-//
-// @param raidPaths             paths of RAID files
-// @param fdsize                size of each device in the RAID
-// @param truncateFile          whether to truncate the file
-// @param blockSize             device block size
-// @param stripeSize            RAID stripe size
-// @param encryptor             encryption object
-// @param maxDeviceWriteSize    device maximum granularity of writes
-std::unique_ptr<Device> createRAIDDevice(
-    std::vector<std::string> raidPaths,
-    uint64_t fdsize,
-    bool truncateFile,
-    uint32_t blockSize,
-    uint32_t stripeSize,
-    std::shared_ptr<DeviceEncryptor> encryptor,
-    uint32_t maxDeviceWriteSize);
-
-// Creates a direct IO single file device.
-//
-// @param fileName              name of the file
-// @param singleFileSize        size of the file
-// @param truncateFile          whether to truncate the file
-// @param blockSize             device block size
-// @param encryptor             encryption object
-// @param maxDeviceWriteSize    device maximum granularity of writes
-std::unique_ptr<Device> createFileDevice(
-    std::string fileName,
-    uint64_t singleFileSize,
-    bool truncateFile,
-    uint32_t blockSize,
-    std::shared_ptr<DeviceEncryptor> encryptor,
-    uint32_t maxDeviceWriteSize);
-
 } // namespace navy
 } // namespace cachelib
 } // namespace facebook

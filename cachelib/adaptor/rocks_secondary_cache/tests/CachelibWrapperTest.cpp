@@ -22,16 +22,11 @@
 #include <pthread.h>
 #include <unistd.h>
 
-namespace facebook {
-namespace rocks_secondary_cache {
+namespace facebook::rocks_secondary_cache {
 using namespace rocksdb;
 
-#if ROCKSDB_MAJOR > 7 || (ROCKSDB_MAJOR == 7 && ROCKSDB_MINOR >= 10)
 class CachelibWrapperTest : public ::testing::Test,
                             public Cache::CreateContext {
-#else
-class CachelibWrapperTest : public ::testing::Test {
-#endif
  public:
   class TestItem {
    public:
@@ -44,7 +39,7 @@ class CachelibWrapperTest : public ::testing::Test {
       size_ = other.size_;
       other.size_ = 0;
     }
-    ~TestItem() {}
+    ~TestItem() = default;
 
     TestItem& operator=(TestItem&& other) {
       buf_.reset();
@@ -79,11 +74,7 @@ class CachelibWrapperTest : public ::testing::Test {
   friend Status InsertWhileCloseTestCb(void* obj,
                                        size_t offset,
                                        size_t size,
-#if ROCKSDB_MAJOR > 7 || (ROCKSDB_MAJOR == 7 && ROCKSDB_MINOR >= 10)
                                        char* out);
-#else
-                                       void* out);
-#endif
   static const uint64_t kVolatileSize = 8 << 20;
 
   static size_t SizeCallback(void* obj) {
@@ -93,11 +84,7 @@ class CachelibWrapperTest : public ::testing::Test {
   static Status SaveToCallback(void* obj,
                                size_t offset,
                                size_t size,
-#if ROCKSDB_MAJOR > 7 || (ROCKSDB_MAJOR == 7 && ROCKSDB_MINOR >= 10)
                                char* out) {
-#else
-                               void* out) {
-#endif
     TestItem* item = reinterpret_cast<TestItem*>(obj);
     char* buf = item->Buf();
     EXPECT_EQ(size, item->Size());
@@ -106,37 +93,26 @@ class CachelibWrapperTest : public ::testing::Test {
     return Status::OK();
   }
 
-#if ROCKSDB_MAJOR > 7 || (ROCKSDB_MAJOR == 7 && ROCKSDB_MINOR >= 10)
   static void DeletionCallback(void* obj, MemoryAllocator*) {
     delete static_cast<TestItem*>(obj);
   }
-#else
-  static void DeletionCallback(const Slice& /*key*/, void* obj) {
-    delete reinterpret_cast<TestItem*>(obj);
-  }
-#endif
 
-#if ROCKSDB_MAJOR > 8 || (ROCKSDB_MAJOR == 8 && ROCKSDB_MINOR >= 1)
   static Cache::CacheItemHelper helper_no_secondary_;
-#endif
 
   static Cache::CacheItemHelper helper_;
 
   static Status SaveToCallbackFail(void* /*obj*/,
                                    size_t /*offset*/,
                                    size_t /*size*/,
-#if ROCKSDB_MAJOR > 7 || (ROCKSDB_MAJOR == 7 && ROCKSDB_MINOR >= 10)
                                    char* /*out*/) {
-#else
-                                   void* /*out*/) {
-#endif
     return Status::NotSupported();
   }
 
   static Cache::CacheItemHelper helper_fail_;
 
-#if ROCKSDB_MAJOR > 7 || (ROCKSDB_MAJOR == 7 && ROCKSDB_MINOR >= 10)
   static Status CreateCallback(const Slice& data,
+                               rocksdb::CompressionType /*type*/,
+                               rocksdb::CacheTier /*source*/,
                                Cache::CreateContext* context,
                                MemoryAllocator* /*allocator*/,
                                void** out_obj,
@@ -148,19 +124,6 @@ class CachelibWrapperTest : public ::testing::Test {
     *out_charge = data.size();
     return Status::OK();
   }
-#else
-  Cache::CreateCallback test_item_creator = [&](const void* buf,
-                                                size_t size,
-                                                void** out_obj,
-                                                size_t* charge) -> Status {
-    if (fail_create_) {
-      return Status::NotSupported();
-    }
-    *out_obj = reinterpret_cast<void*>(new TestItem((char*)buf, size));
-    *charge = size;
-    return Status::OK();
-  };
-#endif
 
   std::string RandomString(int len) {
     std::string ret;
@@ -180,13 +143,12 @@ class CachelibWrapperTest : public ::testing::Test {
 
   std::unique_ptr<SecondaryCacheResultHandle> CacheLookup(
       const Slice& key, bool wait, bool advise_erase, bool& is_in_sec_cache) {
-    return cache()->Lookup(key,
-#if ROCKSDB_MAJOR > 7 || (ROCKSDB_MAJOR == 7 && ROCKSDB_MINOR >= 10)
-                           &CachelibWrapperTest::helper_, /*context=*/this,
-#else
-                           test_item_creator,
+    return cache()->Lookup(key, &CachelibWrapperTest::helper_, /*context=*/this,
+                           wait, advise_erase,
+#if ROCKSDB_MAJOR > 8 || (ROCKSDB_MAJOR == 8 && ROCKSDB_MINOR > 9)
+                           /*stats=*/nullptr,
 #endif
-                           wait, advise_erase, is_in_sec_cache);
+                           is_in_sec_cache);
   }
 
  private:
@@ -195,55 +157,35 @@ class CachelibWrapperTest : public ::testing::Test {
   std::string path_;
 };
 
-#if ROCKSDB_MAJOR > 8 || (ROCKSDB_MAJOR == 8 && ROCKSDB_MINOR >= 1)
 Cache::CacheItemHelper CachelibWrapperTest::helper_no_secondary_(
     CacheEntryRole::kMisc, CachelibWrapperTest::DeletionCallback);
-#endif
 
 Cache::CacheItemHelper CachelibWrapperTest::helper_(
-#if ROCKSDB_MAJOR > 7 || (ROCKSDB_MAJOR == 7 && ROCKSDB_MINOR >= 10)
     CacheEntryRole::kMisc,
     CachelibWrapperTest::DeletionCallback,
     CachelibWrapperTest::SizeCallback,
     CachelibWrapperTest::SaveToCallback,
-#if ROCKSDB_MAJOR > 8 || (ROCKSDB_MAJOR == 8 && ROCKSDB_MINOR >= 1)
     CachelibWrapperTest::CreateCallback,
     &CachelibWrapperTest::helper_no_secondary_);
-#else
-    CachelibWrapperTest::CreateCallback);
-#endif
-#else
-    CachelibWrapperTest::SizeCallback,
-    CachelibWrapperTest::SaveToCallback,
-    CachelibWrapperTest::DeletionCallback);
-#endif
 
 Cache::CacheItemHelper CachelibWrapperTest::helper_fail_(
-#if ROCKSDB_MAJOR > 7 || (ROCKSDB_MAJOR == 7 && ROCKSDB_MINOR >= 10)
     CacheEntryRole::kMisc,
     CachelibWrapperTest::DeletionCallback,
     CachelibWrapperTest::SizeCallback,
     CachelibWrapperTest::SaveToCallbackFail,
-#if ROCKSDB_MAJOR > 8 || (ROCKSDB_MAJOR == 8 && ROCKSDB_MINOR >= 1)
     CachelibWrapperTest::CreateCallback,
     &CachelibWrapperTest::helper_no_secondary_);
-#else
-    CachelibWrapperTest::CreateCallback);
-#endif
-#else
-    CachelibWrapperTest::SizeCallback,
-    CachelibWrapperTest::SaveToCallbackFail,
-    CachelibWrapperTest::DeletionCallback);
-#endif
 
 TEST_F(CachelibWrapperTest, BasicTest) {
   std::string str1 = RandomString(1020);
   TestItem item1(str1.data(), str1.length());
-  ASSERT_EQ(cache()->Insert("k1", &item1, &CachelibWrapperTest::helper_),
+  ASSERT_EQ(cache()->Insert("k1", &item1, &CachelibWrapperTest::helper_,
+                            /*force_insert=*/false),
             Status::OK());
   std::string str2 = RandomString(1020);
   TestItem item2(str2.data(), str2.length());
-  ASSERT_EQ(cache()->Insert("k2", &item2, &CachelibWrapperTest::helper_),
+  ASSERT_EQ(cache()->Insert("k2", &item2, &CachelibWrapperTest::helper_,
+                            /*force_insert=*/false),
             Status::OK());
 
   std::unique_ptr<rocksdb::SecondaryCacheResultHandle> handle;
@@ -283,7 +225,8 @@ TEST_F(CachelibWrapperTest, WaitAllTest) {
     items.emplace_back(str.data(), str.length());
     ASSERT_EQ(cache()->Insert("k" + std::to_string(i),
                               &items.back(),
-                              &CachelibWrapperTest::helper_),
+                              &CachelibWrapperTest::helper_,
+                              /*force_insert=*/false),
               Status::OK());
   }
 
@@ -333,9 +276,11 @@ TEST_F(CachelibWrapperTest, CreateFailTest) {
   std::string str1 = RandomString(1020);
   TestItem item1(str1.data(), str1.length());
   SetFailCreate(true);
-  ASSERT_EQ(cache()->Insert("k1", &item1, &CachelibWrapperTest::helper_fail_),
+  ASSERT_EQ(cache()->Insert("k1", &item1, &CachelibWrapperTest::helper_fail_,
+                            /*force_insert=*/false),
             Status::NotSupported());
-  ASSERT_EQ(cache()->Insert("k1", &item1, &CachelibWrapperTest::helper_),
+  ASSERT_EQ(cache()->Insert("k1", &item1, &CachelibWrapperTest::helper_,
+                            /*force_insert=*/false),
             Status::OK());
 
   std::unique_ptr<SecondaryCacheResultHandle> handle;
@@ -348,7 +293,8 @@ TEST_F(CachelibWrapperTest, CreateFailTest) {
 TEST_F(CachelibWrapperTest, LookupWhileCloseTest) {
   std::string str1 = RandomString(1020);
   TestItem item1(str1.data(), str1.length());
-  ASSERT_EQ(cache()->Insert("k1", &item1, &CachelibWrapperTest::helper_),
+  ASSERT_EQ(cache()->Insert("k1", &item1, &CachelibWrapperTest::helper_,
+                            /*force_insert=*/false),
             Status::OK());
 
   pthread_mutex_t mu;
@@ -425,11 +371,7 @@ class InsertWhileCloseTestItem : public CachelibWrapperTest::TestItem {
 Status InsertWhileCloseTestCb(void* obj,
                               size_t offset,
                               size_t size,
-#if ROCKSDB_MAJOR > 7 || (ROCKSDB_MAJOR == 7 && ROCKSDB_MINOR >= 10)
                               char* out) {
-#else
-                              void* out) {
-#endif
   InsertWhileCloseTestItem* item = static_cast<InsertWhileCloseTestItem*>(obj);
   pthread_mutex_lock(item->mu());
   pthread_cond_wait(item->cv(), item->mu());
@@ -439,7 +381,8 @@ Status InsertWhileCloseTestCb(void* obj,
 TEST_F(CachelibWrapperTest, InsertWhileCloseTest) {
   std::string str1 = RandomString(1020);
   TestItem item1(str1.data(), str1.length());
-  ASSERT_EQ(cache()->Insert("k1", &item1, &CachelibWrapperTest::helper_),
+  ASSERT_EQ(cache()->Insert("k1", &item1, &CachelibWrapperTest::helper_,
+                            /*force_insert=*/false),
             Status::OK());
 
   pthread_mutex_t mu;
@@ -453,7 +396,8 @@ TEST_F(CachelibWrapperTest, InsertWhileCloseTest) {
     Cache::CacheItemHelper helper = CachelibWrapperTest::helper_;
     helper.saveto_cb = InsertWhileCloseTestCb;
     InsertWhileCloseTestItem item(str.data(), str.length(), &mu, &cv_seq_1);
-    EXPECT_EQ(cache()->Insert("k2", &item, &helper), Status::OK());
+    EXPECT_EQ(cache()->Insert("k2", &item, &helper, /*force_insert=*/false),
+              Status::OK());
   };
   auto close_fn = [&]() {
     RocksCachelibWrapper* wrap_cache =
@@ -496,7 +440,8 @@ TEST_F(CachelibWrapperTest, WaitAllWhileCloseTest) {
     items.emplace_back(str.data(), str.length());
     ASSERT_EQ(cache()->Insert("k" + std::to_string(i),
                               &items.back(),
-                              &CachelibWrapperTest::helper_),
+                              &CachelibWrapperTest::helper_,
+                              /*force_insert=*/false),
               Status::OK());
   }
 
@@ -582,7 +527,8 @@ TEST_F(CachelibWrapperTest, UpdateMaxRateTest) {
 TEST_F(CachelibWrapperTest, LargeItemTest) {
   std::string str1 = RandomString(8 << 20);
   TestItem item1(str1.data(), str1.length());
-  ASSERT_EQ(cache()->Insert("k1", &item1, &CachelibWrapperTest::helper_),
+  ASSERT_EQ(cache()->Insert("k1", &item1, &CachelibWrapperTest::helper_,
+                            /*force_insert=*/false),
             Status::InvalidArgument());
 
   std::unique_ptr<rocksdb::SecondaryCacheResultHandle> handle;
@@ -593,5 +539,4 @@ TEST_F(CachelibWrapperTest, LargeItemTest) {
   handle.reset();
 }
 
-} // namespace rocks_secondary_cache
-} // namespace facebook
+} // namespace facebook::rocks_secondary_cache

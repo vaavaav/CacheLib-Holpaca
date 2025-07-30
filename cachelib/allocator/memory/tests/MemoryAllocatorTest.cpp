@@ -45,8 +45,7 @@ bool test_callback(void* /* unused */, AllocInfo /* unused */) {
 }
 } // namespace
 
-namespace facebook {
-namespace cachelib {
+namespace facebook::cachelib {
 
 TEST_F(MemoryAllocatorTest, Create) {
   size_t size = 100 * Slab::kSize;
@@ -302,7 +301,7 @@ TEST_F(MemoryAllocatorTest, Serialization) {
       ASSERT_EQ(allocInfo.poolId, pid);
       prev = s + 1;
     }
-    allocatedPools.push_back(std::make_pair(pid, allocSizes));
+    allocatedPools.emplace_back(pid, allocSizes);
   }
 
   uint8_t buffer[SerializationBufferSize];
@@ -324,7 +323,7 @@ TEST_F(MemoryAllocatorTest, Serialization) {
       true /* disableCoredump*/);
   ASSERT_TRUE(isSameMemoryAllocator(m, m2));
 
-  for (auto itr : allocatedPools) {
+  for (const auto& itr : allocatedPools) {
     const auto pid = itr.first;
     const auto& allocSizes = itr.second;
     size_t prev = 1;
@@ -392,7 +391,7 @@ TEST_F(MemoryAllocatorTest, PointerCompression) {
     poolAllocs[pid] = allocs;
   };
 
-  for (auto pool : pools) {
+  for (const auto& pool : pools) {
     makeAllocsOutOfPool(pool.first);
   }
 
@@ -401,13 +400,28 @@ TEST_F(MemoryAllocatorTest, PointerCompression) {
   for (const auto& pool : poolAllocs) {
     const auto& allocs = pool.second;
     for (const auto* alloc : allocs) {
-      CompressedPtr ptr = m.compress(alloc);
+      CompressedPtr ptr = m.compress(alloc, false /* isMultiTiered */);
       ASSERT_FALSE(ptr.isNull());
-      ASSERT_EQ(alloc, m.unCompress(ptr));
+      ASSERT_EQ(alloc, m.unCompress(ptr, false /* isMultiTiered */));
     }
   }
 
-  ASSERT_EQ(nullptr, m.unCompress(m.compress(nullptr)));
+  ASSERT_EQ(nullptr,
+            m.unCompress(m.compress(nullptr, false /* isMultiTiered */),
+                         false /* isMultiTiered */));
+
+  // test pointer compression with multi-tier
+  for (const auto& pool : poolAllocs) {
+    const auto& allocs = pool.second;
+    for (const auto* alloc : allocs) {
+      CompressedPtr ptr = m.compress(alloc, true /* isMultiTiered */);
+      ASSERT_FALSE(ptr.isNull());
+      ASSERT_EQ(alloc, m.unCompress(ptr, true /* isMultiTiered */));
+    }
+  }
+
+  ASSERT_EQ(nullptr, m.unCompress(m.compress(nullptr, true /* isMultiTiered */),
+                                  true /* isMultiTiered */));
 }
 
 TEST_F(MemoryAllocatorTest, Restorable) {
@@ -587,8 +601,8 @@ TEST_F(MemoryAllocatorTest, isAllocFreed) {
       ASSERT_TRUE(m.isAllocFreed(releaseContext, slabAlloc));
     }
 
-    m.completeSlabRelease(std::move(releaseContext));
-    ASSERT_TRUE(activeAllocs.size() > 0);
+    m.completeSlabRelease(releaseContext);
+    ASSERT_TRUE(!activeAllocs.empty());
     for (void* slabAlloc : activeAllocs) {
       // slab release already completed
       ASSERT_THROW(m.isAllocFreed(releaseContext, slabAlloc),
@@ -752,7 +766,7 @@ TEST_F(MemoryAllocatorTest, ZeroedSlabAllocs) {
       m2.free(slabAlloc);
       ASSERT_TRUE(m2.isAllocFreed(releaseContext, slabAlloc));
     }
-    m2.completeSlabRelease(std::move(releaseContext));
+    m2.completeSlabRelease(releaseContext);
   }
 
   // try allocate slabs again, they should be zero
@@ -801,8 +815,8 @@ TEST_F(MemoryAllocatorTest, forEachAllocation) {
     ASSERT_TRUE(m.isAllocFreed(releaseContext, slabAlloc));
   }
 
-  m.completeSlabRelease(std::move(releaseContext));
-  ASSERT_TRUE(activeAllocs.size() > 0);
+  m.completeSlabRelease(releaseContext);
+  ASSERT_TRUE(!activeAllocs.empty());
   for (void* slabAlloc : activeAllocs) {
     // slab release already completed
     ASSERT_THROW(m.isAllocFreed(releaseContext, slabAlloc),
@@ -814,5 +828,4 @@ TEST_F(MemoryAllocatorTest, forEachAllocation) {
   m.forEachAllocation(test_callback);
   ASSERT_EQ(forEachAllocationCount, 0);
 }
-} // namespace cachelib
-} // namespace facebook
+} // namespace facebook::cachelib

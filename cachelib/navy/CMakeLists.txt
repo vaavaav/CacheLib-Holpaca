@@ -31,12 +31,16 @@ add_library (cachelib_navy
   block_cache/RegionManager.cpp
   common/Buffer.cpp
   common/Device.cpp
+  common/FdpNvme.cpp
   common/Hash.cpp
+  common/NavyThread.cpp
   common/SizeDistribution.cpp
   common/Types.cpp
   driver/Driver.cpp
   engine/EnginePair.cpp
   Factory.cpp
+  scheduler/NavyRequestDispatcher.cpp
+  scheduler/NavyRequestScheduler.cpp
   scheduler/ThreadPoolJobScheduler.cpp
   scheduler/ThreadPoolJobQueue.cpp
   serialization/RecordIO.cpp

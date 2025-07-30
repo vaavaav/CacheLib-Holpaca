@@ -204,14 +204,14 @@ Meta is sharing anonymized traces captured from large scale production cache ser
 1. Install and setup the AWS CLI
 2. Download the tracedata
    ```sh
-   $ aws s3 ls s3://cachelib-workload-sharing/pub/kvcache/202206/
+   $ aws s3 ls --no-sign-request s3://cachelib-workload-sharing/pub/kvcache/202206/
    2023-02-09 13:37:50       1374 config_kvcache.json
    2023-02-09 13:38:58 4892102575 kvcache_traces_1.csv
    2023-02-09 13:38:58 4814294537 kvcache_traces_2.csv
    2023-02-09 13:38:58 4678364393 kvcache_traces_3.csv
    2023-02-09 13:38:58 4734675702 kvcache_traces_4.csv
    2023-02-09 13:38:58 4810857756 kvcache_traces_5.csv
-   $ aws s3 cp s3://cachelib-workload-sharing/pub/kvcache/202206/ ./ --recursive --no-sign-request
+   $ aws s3 cp --no-sign-request --recursive s3://cachelib-workload-sharing/pub/kvcache/202206/ ./
    ```
 3. Modify the test config as needed (see following section)
    ```sh
@@ -229,11 +229,31 @@ The list of traces uploaded are as follows
 * `kvcache/202206`
    * Those are traces captured for 5 consecutive days from a Meta's key-value cache cluster consisting of 500 hosts
    * Each host uses (roughly) 42 GB of DRAM and 930 GB of SSD for caching
-   * The sampling ratio was 1/50'000
+   * The traffic factor is 1/100
+
+* `kvcache/202401`
+   * Those are traces captured for 5 consecutive days from a Meta's key-value cache cluster consisting of 8000 hosts
+   * Each host uses (roughly) 42 GB of DRAM and 930 GB of SSD for caching
+   * The traffic factor is 1/125
+   * This trace provides usecase and sub-usecase columns additionally; usecase identifies the tenant (i.e., application using distributed key-value cache). The sub-usecase is meant to further categorize the different traffics from the same usecase, but should be considered neither complete nor accurate
+
+* `cdn/202303/`
+   * Those are traces captured from Meta's 3 selected CDN cache clusters (named nha, prn, eag) respectively for 7 days on Mar 2023
+   * Each cluster consists of 1000's of hosts
+   * Each host uses (roughly) 40 GB of DRAM and 1.8TB of SSD for caching
+   * Traffic factor and scaled cache sizes are:
+      * nha: 1/6.37, DRAM 6006 MB, NVM 272314 MB
+      * prn: 1/4.58, DRAM 8357 MB, NVM 375956 MB
+      * eag: 1/13.4, DRAM 2857 MB, NVM 129619 MB
+
+* `storage/202312`
+   * Those are traces captured for 5 consecutive days from a Meta's block storage cluster consisting of 3000 hosts at the sampling ratio of 1/4000
+   * Each host uses (roughly) 10 GB of DRAM and 380 GB of SSD for caching
+   * The traffic factor is ~1
 
 ### Resource Scaling or Trace Amplifcation
 
-The trace is captured at a certain sampling ratio. For example, the `kvcache/202206` is sampled at the ratio of 1/50'000 from 500 hosts. This means that the trace data contains the samples amount to 1/100 of those handled by each host on average. So, in order to get the similar results from the cachebench simulation, either the cache resource or the trace data needs to be scaled accordingly.
+The trace is captured at a certain sampling ratio and the traffic factor is defined as the ratio of the captured traffic normalized to those received from a single host in the production. For example, the `kvcache/202206` is sampled at the ratio of 1/50'000 from 500 hosts, meaning the traffic factor is 1/100. This means that the trace data contains the samples amount to 1/100 of those handled by each host on average. So, in order to get the similar results from the cachebench simulation, either the cache resource or the trace data needs to be scaled accordingly.
 
 The resource scaling is useful when the required resources (e.g., NVM cache 1TB) are not available in the simulation system or when one is interested in iterating fast with sacrificing accuracy of some metrics. The resource scaling can be done by modifying the `cache_config` in the cachebench test config.
 

@@ -34,22 +34,23 @@ struct ObjectCacheConfig {
   using ItemDestructor = typename ObjectCache::ItemDestructor;
   using SerializeCb = typename ObjectCache::SerializeCb;
   using DeserializeCb = typename ObjectCache::DeserializeCb;
+  using EvictionPolicyConfig = typename ObjectCache::EvictionPolicyConfig;
 
   // Set cache name as a string
   ObjectCacheConfig& setCacheName(const std::string& _cacheName);
 
   // Set the cache capacity in terms of the number of objects and
-  // the cache size, i.e., the total size of objects.
+  // the total object size.
   // the entries limit specifies the object number limit to be held in
   // cache. If the limit is exceeded, objects will be evicted.
-  // The cache size needs to be set only to enable "size-aware"
+  // The total object size limit needs to be set only to enable "size-aware"
   // object cache which tracks the object size internally and limits
   // the total memory size consumed by those objects.
   // When enabling the "size-aware" object cache, the size controller interval
   // should also be set to positive number which determines the interval
   // at which the size controller is invoked
   ObjectCacheConfig& setCacheCapacity(size_t _l1EntriesLimit,
-                                      size_t _cacheSizeLimit = 0,
+                                      size_t _totalObjectSizeLimit = 0,
                                       int _sizeControllerIntervalMs = 0);
 
   // Set the number of internal cache pools to be used for sharding.
@@ -105,6 +106,7 @@ struct ObjectCacheConfig {
   // });
   ObjectCacheConfig& setItemDestructor(ItemDestructor destructor);
 
+  // Run in a multi-thread mode, eviction order is not guaranteed to persist.
   // @param threadCount          number of threads to work on persistence
   //                             concurrently
   // @param baseFilePath         metadata will be saved in "baseFilePath";
@@ -117,7 +119,30 @@ struct ObjectCacheConfig {
                                        SerializeCb serializeCallback,
                                        DeserializeCb deserializeCallback);
 
+  // Run in a single-thread mode to persist the eviction order.
+  // Please note: TinyLFU eviction policy is not supported.
+  // @param baseFilePath         metadata will be saved in "baseFilePath";
+  //                             objects will be saved in "baseFilePath_0"
+  // @param serializeCallback    callback to serialize an object
+  // @param deserializeCallback  callback to deserialize an object
+  ObjectCacheConfig& enablePersistenceWithEvictionOrder(
+      std::string basefilePath,
+      SerializeCb serializeCallback,
+      DeserializeCb deserializeCallback);
+
+  // Enable tracking Jemalloc external fragmentation.
+  ObjectCacheConfig& enableFragmentationTracking();
+
   ObjectCacheConfig& setItemReaperInterval(std::chrono::milliseconds interval);
+
+  ObjectCacheConfig& setEvictionPolicyConfig(
+      EvictionPolicyConfig _evictionPolicyConfig);
+
+  ObjectCacheConfig& setEvictionSearchLimit(uint32_t _evictionSearchLimit);
+
+  // We will delay worker start until user explicitly calls
+  // ObjectCache::startCacheWorkers()
+  ObjectCacheConfig& setDelayCacheWorkersStart();
 
   // With size controller disabled, above this many entries, L1 will start
   // evicting.
@@ -146,13 +171,21 @@ struct ObjectCacheConfig {
   // If this is enabled, user has to pass the object size upon insertion
   bool objectSizeTrackingEnabled{false};
 
+  // If this is enabled, we will track Jemalloc external fragmentation and add
+  // the fragmentation bytes on top of total object size to bound the cache
+  bool fragmentationTrackingEnabled{false};
+
+  // If this is enabled, we will track the object size distribution and export
+  // the stats to ods.
+  bool objectSizeDistributionTrackingEnabled{false};
+
   // Period to fire size controller in milliseconds. 0 means size controller is
   // disabled.
   int sizeControllerIntervalMs{0};
 
   // With size controller enabled, if total object size is above this limit,
-  // L1 will start evicting
-  size_t cacheSizeLimit{0};
+  // the cache will start evicting
+  size_t totalObjectSizeLimit{0};
 
   // Throttler config of size controller
   util::Throttler::Config sizeControllerThrottlerConfig{};
@@ -166,6 +199,9 @@ struct ObjectCacheConfig {
 
   // time to sleep between each reaping period.
   std::chrono::milliseconds reaperInterval{5000};
+
+  // The flag indicating whether cache persistence is enabled
+  bool persistenceEnabled{false};
 
   // The thread number for cache persistence.
   // It sets the threads to run a persistor upon shut down and a restorer upon
@@ -185,6 +221,17 @@ struct ObjectCacheConfig {
   // Deserialize callback for cache persistence
   DeserializeCb deserializeCb{};
 
+  // Config of the eviction policy
+  EvictionPolicyConfig evictionPolicyConfig{};
+
+  // The maximum number of tries to search for an object to evict
+  // 0 means it's infinite
+  uint32_t evictionSearchLimit{50};
+
+  // If true, we will delay worker start until user explicitly calls
+  // ObjectCache::startCacheWorkers()
+  bool delayCacheWorkersStart{false};
+
   const ObjectCacheConfig& validate() const;
 };
 
@@ -198,18 +245,18 @@ ObjectCacheConfig<T>& ObjectCacheConfig<T>::setCacheName(
 template <typename T>
 ObjectCacheConfig<T>& ObjectCacheConfig<T>::setCacheCapacity(
     size_t _l1EntriesLimit,
-    size_t _cacheSizeLimit,
+    size_t _totalObjectSizeLimit,
     int _sizeControllerIntervalMs) {
   l1EntriesLimit = _l1EntriesLimit;
-  cacheSizeLimit = _cacheSizeLimit;
+  totalObjectSizeLimit = _totalObjectSizeLimit;
   sizeControllerIntervalMs = _sizeControllerIntervalMs;
 
-  if (_cacheSizeLimit && _sizeControllerIntervalMs) {
+  if (_totalObjectSizeLimit && _sizeControllerIntervalMs) {
     // object size tracking is enabled as well
     objectSizeTrackingEnabled = true;
-  } else if (_sizeControllerIntervalMs || _cacheSizeLimit) {
+  } else if (_sizeControllerIntervalMs || _totalObjectSizeLimit) {
     throw std::invalid_argument(
-        "Both of sizeControllerIntervalMs and cacheSizeLimit should be "
+        "Both of sizeControllerIntervalMs and totalObjectSizeLimit should be "
         "provided to enable the size controller");
   }
   return *this;
@@ -251,6 +298,12 @@ ObjectCacheConfig<T>& ObjectCacheConfig<T>::setSizeControllerThrottlerConfig(
 }
 
 template <typename T>
+ObjectCacheConfig<T>& ObjectCacheConfig<T>::enableFragmentationTracking() {
+  fragmentationTrackingEnabled = true;
+  return *this;
+}
+
+template <typename T>
 ObjectCacheConfig<T>& ObjectCacheConfig<T>::setEventTracker(
     EventTrackerSharedPtr&& ptr) {
   eventTracker = std::move(ptr);
@@ -270,6 +323,10 @@ ObjectCacheConfig<T>& ObjectCacheConfig<T>::enablePersistence(
     std::string basefilePath,
     SerializeCb serializeCallback,
     DeserializeCb deserializeCallback) {
+  if (persistenceEnabled) {
+    throw std::invalid_argument("cache persistence is already enabled");
+  }
+
   if (threadCount == 0) {
     throw std::invalid_argument(
         "A non-zero thread count must be set to enable cache persistence");
@@ -293,9 +350,55 @@ ObjectCacheConfig<T>& ObjectCacheConfig<T>::enablePersistence(
 }
 
 template <typename T>
+ObjectCacheConfig<T>& ObjectCacheConfig<T>::enablePersistenceWithEvictionOrder(
+    std::string basefilePath,
+    SerializeCb serializeCallback,
+    DeserializeCb deserializeCallback) {
+  if (persistenceEnabled) {
+    throw std::invalid_argument("cache persistence is already enabled");
+  }
+
+  if (basefilePath.empty()) {
+    throw std::invalid_argument(
+        "A valid file path must be providede to enable cache persistence");
+  }
+
+  if (!serializeCallback || !deserializeCallback) {
+    throw std::invalid_argument(
+        "Serialize and deserialize callback must be set to enable cache "
+        "persistence");
+  }
+  persistThreadCount = 1;
+  persistBaseFilePath = basefilePath;
+  serializeCb = std::move(serializeCallback);
+  deserializeCb = std::move(deserializeCallback);
+  return *this;
+}
+
+template <typename T>
 ObjectCacheConfig<T>& ObjectCacheConfig<T>::setItemReaperInterval(
     std::chrono::milliseconds _reaperInterval) {
   reaperInterval = _reaperInterval;
+  return *this;
+}
+
+template <typename T>
+ObjectCacheConfig<T>& ObjectCacheConfig<T>::setEvictionPolicyConfig(
+    EvictionPolicyConfig _evictionPolicyConfig) {
+  evictionPolicyConfig = _evictionPolicyConfig;
+  return *this;
+}
+
+template <typename T>
+ObjectCacheConfig<T>& ObjectCacheConfig<T>::setEvictionSearchLimit(
+    uint32_t _evictionSearchLimit) {
+  evictionSearchLimit = _evictionSearchLimit;
+  return *this;
+}
+
+template <typename T>
+ObjectCacheConfig<T>& ObjectCacheConfig<T>::setDelayCacheWorkersStart() {
+  delayCacheWorkersStart = true;
   return *this;
 }
 
@@ -316,11 +419,24 @@ const ObjectCacheConfig<T>& ObjectCacheConfig<T>::validate() const {
   }
 
   if (objectSizeTrackingEnabled) {
-    if ((sizeControllerIntervalMs && !cacheSizeLimit) ||
-        (!sizeControllerIntervalMs && cacheSizeLimit)) {
+    if ((sizeControllerIntervalMs && !totalObjectSizeLimit) ||
+        (!sizeControllerIntervalMs && totalObjectSizeLimit)) {
       throw std::invalid_argument(
-          "Only one of sizeControllerIntervalMs and cacheSizeLimit is set");
+          "Only one of sizeControllerIntervalMs and totalObjectSizeLimit is "
+          "set");
     }
+  }
+
+  if (fragmentationTrackingEnabled && !objectSizeTrackingEnabled) {
+    throw std::invalid_argument(
+        "Object size tracking has to be enabled to have fragmentation "
+        "tracking");
+  }
+
+  if (objectSizeDistributionTrackingEnabled && !objectSizeTrackingEnabled) {
+    throw std::invalid_argument(
+        "Object size tracking has to be enabled to track object size "
+        "distribution");
   }
   return *this;
 }

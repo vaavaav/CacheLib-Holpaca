@@ -40,7 +40,7 @@ void HighRefcountStressor::start() {
 
     std::vector<std::thread> workers;
     for (size_t i = 0; i < kNumThreads; i++) {
-      workers.push_back(std::thread([this] {
+      workers.emplace_back([this] {
         for (uint64_t j = 0; j < numOpsPerThread_; j++) {
           testLoop();
           ops_.fetch_add(1, std::memory_order_relaxed);
@@ -48,7 +48,7 @@ void HighRefcountStressor::start() {
             break;
           }
         }
-      }));
+      });
     }
     for (auto& worker : workers) {
       worker.join();
@@ -122,7 +122,7 @@ void CachelibMapStressor::start() {
 
     std::vector<std::thread> workers;
     for (size_t i = 0; i < numThreads; i++) {
-      workers.push_back(std::thread([this] {
+      workers.emplace_back([this] {
         for (uint64_t j = 0; j < numOpsPerThread_; j++) {
           testLoop();
           ops_.fetch_add(1, std::memory_order_relaxed);
@@ -130,7 +130,7 @@ void CachelibMapStressor::start() {
             break;
           }
         }
-      }));
+      });
     }
     for (auto& worker : workers) {
       worker.join();
@@ -146,7 +146,7 @@ void CachelibMapStressor::testLoop() {
   auto it = cache_->find(key);
   try {
     if (it) {
-      folly::SharedMutex::ReadHolder r{getLock(key)};
+      std::shared_lock r{getLock(key)};
       auto map =
           TestMap::fromWriteHandle(*cache_, std::move(it).toWriteHandle());
       if (map.size() > kMapSizeUpperbound &&
@@ -154,17 +154,17 @@ void CachelibMapStressor::testLoop() {
         cache_->remove(map.viewWriteHandle());
       } else if (map.size() > kMapSizeUpperbound) {
         r.unlock();
-        folly::SharedMutex::WriteHolder w{getLock(key)};
+        std::unique_lock w{getLock(key)};
         pokeHoles(map);
       } else {
         readEntries(map);
         r.unlock();
-        folly::SharedMutex::WriteHolder w{getLock(key)};
+        std::unique_lock w{getLock(key)};
         populate(map);
       }
       return;
     }
-    folly::SharedMutex::WriteHolder w{getLock(key)};
+    std::unique_lock w{getLock(key)};
     auto map = TestMap::create(*cache_, 0, key);
     populate(map);
     cache_->insertOrReplace(map.viewWriteHandle());
@@ -192,7 +192,7 @@ void CachelibMapStressor::pokeHoles(TestMap& map) {
   std::vector<uint64_t> keys;
   for (const auto& kv : map) {
     if (folly::Random::oneIn(rate)) {
-      keys.push_back(kv.key);
+      keys.push_back(kv.first);
     }
   }
   for (auto k : keys) {
@@ -208,7 +208,7 @@ void CachelibMapStressor::readEntries(TestMap& map) {
   // Scan through all the entries in the map and look up them by key
   std::vector<uint64_t> keys;
   for (const auto& kv : map) {
-    keys.push_back(kv.key);
+    keys.push_back(kv.first);
   }
   for (auto k : keys) {
     if (map.find(k) == nullptr) {
@@ -261,7 +261,7 @@ void CachelibRangeMapStressor::start() {
 
     std::vector<std::thread> workers;
     for (size_t i = 0; i < numThreads; i++) {
-      workers.push_back(std::thread([this] {
+      workers.emplace_back([this] {
         for (uint64_t j = 0; j < numOpsPerThread_; j++) {
           testLoop();
           ops_.fetch_add(1, std::memory_order_relaxed);
@@ -269,7 +269,7 @@ void CachelibRangeMapStressor::start() {
             break;
           }
         }
-      }));
+      });
     }
     for (auto& worker : workers) {
       worker.join();
@@ -285,7 +285,7 @@ void CachelibRangeMapStressor::testLoop() {
   auto it = cache_->find(key);
   try {
     if (it) {
-      folly::SharedMutex::ReadHolder r{getLock(key)};
+      std::shared_lock r{getLock(key)};
       auto map =
           TestMap::fromWriteHandle(*cache_, std::move(it).toWriteHandle());
       if (map.size() > kMapSizeUpperbound &&
@@ -293,17 +293,17 @@ void CachelibRangeMapStressor::testLoop() {
         cache_->remove(map.viewWriteHandle());
       } else if (map.size() > kMapSizeUpperbound) {
         r.unlock();
-        folly::SharedMutex::WriteHolder w{getLock(key)};
+        std::unique_lock w{getLock(key)};
         pokeHoles(map);
       } else {
         readEntries(map);
         r.unlock();
-        folly::SharedMutex::WriteHolder w{getLock(key)};
+        std::unique_lock w{getLock(key)};
         populate(map);
       }
       return;
     }
-    folly::SharedMutex::WriteHolder w{getLock(key)};
+    std::unique_lock w{getLock(key)};
     auto map = TestMap::create(*cache_, 0, key);
     populate(map);
     cache_->insertOrReplace(map.viewWriteHandle());

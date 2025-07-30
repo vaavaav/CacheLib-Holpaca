@@ -16,10 +16,10 @@
 
 #pragma once
 
-#include <folly/DynamicConverter.h>
 #include <folly/Format.h>
 #include <folly/hash/Hash.h>
-#include <folly/json.h>
+#include <folly/json/DynamicConverter.h>
+#include <folly/json/json.h>
 #include <folly/logging/xlog.h>
 #include <gflags/gflags.h>
 #include <sys/stat.h>
@@ -44,10 +44,13 @@
 #include "cachelib/cachebench/util/NandWrites.h"
 
 DECLARE_bool(report_api_latency);
+DECLARE_string(report_ac_memory_usage_stats);
 
 namespace facebook {
 namespace cachelib {
 namespace cachebench {
+constexpr folly::StringPiece kCachebenchCacheName = "cachebench";
+
 // An admission policy that rejects items that was last accessed more than
 // X seconds ago. This is useful to simulate workloads where we provide a
 // retention (soft) guarantee.

@@ -23,9 +23,7 @@
 
 #include "cachelib/navy/common/Utils.h"
 
-namespace facebook {
-namespace cachelib {
-namespace navy {
+namespace facebook::cachelib::navy {
 
 constexpr std::chrono::seconds LruPolicy::kEstimatorWindow;
 
@@ -40,7 +38,7 @@ LruPolicy::LruPolicy(uint32_t expectedNumRegions)
 void LruPolicy::touch(RegionId rid) {
   XDCHECK(rid.valid());
   auto i = rid.index();
-  std::lock_guard<std::mutex> lock{mutex_};
+  std::lock_guard<TimedMutex> lock{mutex_};
   if (i >= array_.size()) {
     array_.resize(i + 1);
   }
@@ -56,7 +54,7 @@ void LruPolicy::track(const Region& region) {
   auto rid = region.id();
   XDCHECK(rid.valid());
   auto i = rid.index();
-  std::lock_guard<std::mutex> lock{mutex_};
+  std::lock_guard<TimedMutex> lock{mutex_};
   if (i >= array_.size()) {
     array_.resize(i + 1);
   }
@@ -75,7 +73,7 @@ RegionId LruPolicy::evict() {
   uint32_t hits{0};
 
   {
-    std::lock_guard<std::mutex> lock{mutex_};
+    std::lock_guard<TimedMutex> lock{mutex_};
     if (tail_ == kInvalidIndex) {
       return RegionId{};
     }
@@ -93,7 +91,7 @@ RegionId LruPolicy::evict() {
 }
 
 void LruPolicy::reset() {
-  std::lock_guard<std::mutex> lock{mutex_};
+  std::lock_guard<TimedMutex> lock{mutex_};
   array_.clear();
   head_ = kInvalidIndex;
   tail_ = kInvalidIndex;
@@ -201,6 +199,4 @@ void LruPolicy::recover(RecordReader& rr) {
   throw std::runtime_error("Not Implemented.");
 }
 
-} // namespace navy
-} // namespace cachelib
-} // namespace facebook
+} // namespace facebook::cachelib::navy

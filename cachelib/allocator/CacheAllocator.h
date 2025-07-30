@@ -20,6 +20,7 @@
 #include <folly/Likely.h>
 #include <folly/Random.h>
 #include <folly/ScopeGuard.h>
+#include <folly/fibers/TimedMutex.h>
 #include <folly/logging/xlog.h>
 #include <folly/synchronization/SanitizeThread.h>
 #include <gtest/gtest.h>
@@ -38,8 +39,7 @@
 #include <folly/Range.h>
 #pragma GCC diagnostic pop
 
-#include <shared_mutex>
-
+#include "cachelib/allocator/BackgroundMover.h"
 #include "cachelib/allocator/CCacheManager.h"
 #include "cachelib/allocator/Cache.h"
 #include "cachelib/allocator/CacheAllocatorConfig.h"
@@ -84,6 +84,8 @@
 
 namespace facebook {
 namespace cachelib {
+
+using folly::fibers::TimedMutex;
 
 template <typename AllocatorT>
 class FbInternalRuntimeUpdateWrapper;
@@ -556,12 +558,10 @@ class CacheAllocator : public CacheBase {
   // should call this API only when they are going to mutate the item data.
   //
   // @param key               the key for lookup
-  // @param isNvmInvalidate   whether to do nvm invalidation;
-  //                          defaults to be true
   //
   // @return      the write handle for the item or a handle to nullptr if the
   //              key does not exist.
-  WriteHandle findToWrite(Key key, bool doNvmInvalidation = true);
+  WriteHandle findToWrite(Key key);
 
   // look up an item by its key. This ignores the nvm cache and only does RAM
   // lookup.
@@ -577,13 +577,10 @@ class CacheAllocator : public CacheBase {
   // item data.
   //
   // @param key         the key for lookup
-  // @param isNvmInvalidate   whether to do nvm invalidation;
-  //                          defaults to be true
   //
   // @return      the write handle for the item or a handle to nullptr if the
   //              key does not exist.
-  FOLLY_ALWAYS_INLINE WriteHandle
-  findFastToWrite(Key key, bool doNvmInvalidation = true);
+  FOLLY_ALWAYS_INLINE WriteHandle findFastToWrite(Key key);
 
   // look up an item by its key. This ignores the nvm cache and only does RAM
   // lookup. This API does not update the stats related to cache gets and misses
@@ -711,6 +708,12 @@ class CacheAllocator : public CacheBase {
   //
   // @return    the full usable size for this item
   uint32_t getUsableSize(const Item& item) const;
+
+  // create memory assignment to bg workers
+  auto createBgWorkerMemoryAssignments(size_t numWorkers);
+
+  // whether bg worker should be woken
+  bool shouldWakeupBgEvictor(PoolId pid, ClassId cid);
 
   // Get a random item from memory
   // This is useful for profiling and sampling cachelib managed memory
@@ -1056,6 +1059,26 @@ class CacheAllocator : public CacheBase {
   bool startNewReaper(std::chrono::milliseconds interval,
                       util::Throttler::Config reaperThrottleConfig);
 
+  // start background promoter, starting/stopping of this worker
+  // should not be done concurrently with addPool
+  // @param interval                the period this worker fires
+  // @param strategy                strategy to promote items
+  // @param threads                 number of threads used by the worker
+  bool startNewBackgroundPromoter(
+      std::chrono::milliseconds interval,
+      std::shared_ptr<BackgroundMoverStrategy> strategy,
+      size_t threads);
+
+  // start background evictor, starting/stopping of this worker
+  // should not be done concurrently with addPool
+  // @param interval                the period this worker fires
+  // @param strategy                strategy to evict items
+  // @param threads                 number of threads used by the worker
+  bool startNewBackgroundEvictor(
+      std::chrono::milliseconds interval,
+      std::shared_ptr<BackgroundMoverStrategy> strategy,
+      size_t threads);
+
   // Stop existing workers with a timeout
   bool stopPoolRebalancer(std::chrono::seconds timeout = std::chrono::seconds{
                               0});
@@ -1064,6 +1087,10 @@ class CacheAllocator : public CacheBase {
                              0});
   bool stopMemMonitor(std::chrono::seconds timeout = std::chrono::seconds{0});
   bool stopReaper(std::chrono::seconds timeout = std::chrono::seconds{0});
+  bool stopBackgroundEvictor(
+      std::chrono::seconds timeout = std::chrono::seconds{0});
+  bool stopBackgroundPromoter(
+      std::chrono::seconds timeout = std::chrono::seconds{0});
 
   // Set pool optimization to either true or false
   //
@@ -1168,6 +1195,9 @@ class CacheAllocator : public CacheBase {
   // whether it is object-cache
   bool isObjectCache() const override final { return false; }
 
+  // combined pool size for all memory tiers
+  size_t getPoolSize(PoolId pid) const;
+
   // pool stats by pool id
   PoolStats getPoolStats(PoolId pid) const override final;
 
@@ -1226,7 +1256,7 @@ class CacheAllocator : public CacheBase {
   // run the benchmarks after flushing.
   void flushNvmCache();
 
-  // Dump the last N items for an evictable MM Container
+  // Dump the last N items for an MM Container
   // @return  vector of the string of each item. Empty if nothing in LRU
   // @throw  std::invalid_argument if <pid, cid> does not exist
   std::vector<std::string> dumpEvictionIterator(PoolId pid,
@@ -1317,7 +1347,7 @@ class CacheAllocator : public CacheBase {
 
  private:
   // wrapper around Item's refcount and active handle tracking
-  FOLLY_ALWAYS_INLINE bool incRef(Item& it);
+  FOLLY_ALWAYS_INLINE RefcountWithFlags::IncResult incRef(Item& it);
   FOLLY_ALWAYS_INLINE RefcountWithFlags::Value decRef(Item& it);
 
   // drops the refcount and if needed, frees the allocation back to the memory
@@ -1416,6 +1446,7 @@ class CacheAllocator : public CacheBase {
   // @param creationTime    Timestamp when this item was created
   // @param expiryTime      set an expiry timestamp for the item (0 means no
   //                        expiration time).
+  // @param fromBgThread    whether this is called from BG thread
   //
   // @return      the handle for the item or an invalid handle(nullptr) if the
   //              allocation failed. Allocation can fail if one such
@@ -1429,7 +1460,8 @@ class CacheAllocator : public CacheBase {
                                Key key,
                                uint32_t size,
                                uint32_t creationTime,
-                               uint32_t expiryTime);
+                               uint32_t expiryTime,
+                               bool fromBgThread = false);
 
   // Allocate a chained item
   //
@@ -1439,26 +1471,13 @@ class CacheAllocator : public CacheBase {
   // The parent handle parameter here is mainly used to find the
   // correct pool to allocate memory for this chained item
   //
-  // @param parent    handle to the cache item
+  // @param parent    the parent item
   // @param size      the size for the chained allocation
   //
   // @return    handle to the chained allocation
   // @throw     std::invalid_argument if the size requested is invalid or
   //            if the item is invalid
-  WriteHandle allocateChainedItemInternal(const ReadHandle& parent,
-                                          uint32_t size);
-
-  // Given an item and its parentKey, validate that the parentKey
-  // corresponds to an item that's the parent of the supplied item.
-  //
-  // @param item       item that we want to get the parent handle for
-  // @param parentKey  key of the item's parent
-  //
-  // @return  handle to the parent item if the validations pass
-  //          otherwise, an empty Handle is returned.
-  //
-  ReadHandle validateAndGetParentHandleForChainedMoveLocked(
-      const ChainedItem& item, const Key& parentKey);
+  WriteHandle allocateChainedItemInternal(const Item& parent, uint32_t size);
 
   // Given an existing item, allocate a new one for the
   // existing one to later be moved into.
@@ -1484,16 +1503,21 @@ class CacheAllocator : public CacheBase {
     return accessContainer_->find(key);
   }
 
-  // look up an item by its key. This ignores the nvm cache and only does RAM
-  // lookup.
+  // TODO: do another round of audit to refactor our lookup paths. This is
+  //       still convoluted.
   //
-  // @param key         the key for lookup
-  // @param mode        the mode of access for the lookup.
-  //                    AccessMode::kRead or AccessMode::kWrite
+  // internal helper that grabs a refcounted handle to the item. This does
+  // not record the access to reflect in the mmContainer. This also checks
+  // expiration and also bumps stats if caller is a regular find or findFast.
   //
-  // @return      the handle for the item or a handle to nullptr if the key does
-  //              not exist.
-  FOLLY_ALWAYS_INLINE WriteHandle findFastInternal(Key key, AccessMode mode);
+  // @param key     key to look up in the access container
+  // @param event   cachelib lookup operation
+  //
+  // @return handle if item is found and not expired, nullptr otherwise
+  //
+  // @throw std::overflow_error is the maximum item refcount is execeeded by
+  //        creating this item handle.
+  WriteHandle findInternalWithExpiration(Key key, AllocatorApiEvent event);
 
   // look up an item by its key across the nvm cache as well if enabled.
   //
@@ -1570,7 +1594,7 @@ class CacheAllocator : public CacheBase {
   // @param newParent the new parent for the chain
   //
   // @throw if any of the conditions for parent or newParent are not met.
-  void transferChainLocked(WriteHandle& parent, WriteHandle& newParent);
+  void transferChainLocked(Item& parent, Item& newParent);
 
   // replace a chained item in the existing chain. This needs to be called
   // with the chained item lock held exclusive
@@ -1583,6 +1607,24 @@ class CacheAllocator : public CacheBase {
   WriteHandle replaceChainedItemLocked(Item& oldItem,
                                        WriteHandle newItemHdl,
                                        const Item& parent);
+
+  //
+  // Performs the actual inplace replace - it is called from
+  // moveChainedItem and replaceChainedItemLocked
+  // must hold chainedItemLock
+  //
+  // @param oldItem  the item we are replacing in the chain
+  // @param newItem  the item we are replacing it with
+  // @param parent   the parent for the chain
+  // @param fromMove used to determine if the replaced was called from
+  //                 moveChainedItem - we avoid the handle destructor
+  //                 in this case.
+  //
+  // @return handle to the oldItem
+  void replaceInChainLocked(Item& oldItem,
+                            WriteHandle& newItemHdl,
+                            const Item& parent,
+                            bool fromMove);
 
   // Insert an item into MM container. The caller must hold a valid handle for
   // the item.
@@ -1661,34 +1703,49 @@ class CacheAllocator : public CacheBase {
                        bool removeFromNvm = true,
                        bool recordApiEvent = true);
 
+  // Must be called by the thread which called markForEviction and
+  // succeeded. After this call, the item is unlinked from Access and
+  // MM Containers. The item is no longer marked as exclusive and it's
+  // ref count is 0 - it's available for recycling.
+  void unlinkItemForEviction(Item& it);
+
   // Implementation to find a suitable eviction from the container. The
   // two parameters together identify a single container.
   //
   // @param  pid  the id of the pool to look for evictions inside
   // @param  cid  the id of the class to look for evictions inside
-  // @return An evicted item or nullptr  if there is no suitable candidate.
+  // @return An evicted item or nullptr  if there is no suitable candidate found
+  // within the configured number of attempts.
   Item* findEviction(PoolId pid, ClassId cid);
+
+  // Get next eviction candidate from MMContainer, remove from AccessContainer,
+  // MMContainer and insert into NVMCache if enabled.
+  //
+  // @param pid  the id of the pool to look for evictions inside
+  // @param cid  the id of the class to look for evictions inside
+  // @param searchTries number of search attempts so far.
+  //
+  // @return pair of [candidate, toRecycle]. Pair of null if reached the end of
+  // the eviction queue or no suitable candidate found
+  // within the configured number of attempts
+  std::pair<Item*, Item*> getNextCandidate(PoolId pid,
+                                           ClassId cid,
+                                           unsigned int& searchTries);
 
   using EvictionIterator = typename MMContainer::LockedIterator;
 
-  // Advance the current iterator and try to evict a regular item
+  // Wakes up waiters if there are any
   //
-  // @param  mmContainer  the container to look for evictions.
-  // @param  itr          iterator holding the item
-  //
-  // @return  valid handle to regular item on success. This will be the last
-  //          handle to the item. On failure an empty handle.
-  WriteHandle advanceIteratorAndTryEvictRegularItem(MMContainer& mmContainer,
-                                                    EvictionIterator& itr);
+  // @param item    wakes waiters that are waiting on that item
+  // @param handle  handle to pass to the waiters
+  void wakeUpWaiters(folly::StringPiece key, WriteHandle handle);
 
-  // Advance the current iterator and try to evict a chained item
-  // Iterator may also be reset during the course of this function
+  // Unmarks item as moving and wakes up any waiters waiting on that item
   //
-  // @param  itr          iterator holding the item
-  //
-  // @return  valid handle to the parent item on success. This will be the last
-  //          handle to the item
-  WriteHandle advanceIteratorAndTryEvictChainedItem(EvictionIterator& itr);
+  // @param item    wakes waiters that are waiting on that item
+  // @param handle  handle to pass to the waiters
+  typename RefcountWithFlags::Value unmarkMovingAndWakeUpWaiters(
+      Item& item, WriteHandle handle);
 
   // Deserializer CacheAllocatorMetadata and verify the version
   //
@@ -1771,50 +1828,21 @@ class CacheAllocator : public CacheBase {
 
   // "Move" (by copying) the content in this item to another memory
   // location by invoking the move callback.
-  //
-  //
-  // @param ctx         slab release context
   // @param item        old item to be moved elsewhere
-  // @param throttler   slow this function down as not to take too much cpu
-  //
   // @return    true  if the item has been moved
   //            false if we have exhausted moving attempts
-  bool moveForSlabRelease(const SlabReleaseContext& ctx,
-                          Item& item,
-                          util::Throttler& throttler);
-
-  // "Move" (by copying) the content in this item to another memory
-  // location by invoking the move callback.
-  //
-  // @param item         old item to be moved elsewhere
-  // @param newItemHdl   handle of new item to be moved into
-  //
-  // @return    true  if the item has been moved
-  //            false if we have exhausted moving attempts
-  bool tryMovingForSlabRelease(Item& item, WriteHandle& newItemHdl);
+  bool moveForSlabRelease(Item& item);
 
   // Evict an item from access and mm containers and
   // ensure it is safe for freeing.
   //
-  // @param ctx         slab release context
   // @param item        old item to be moved elsewhere
-  // @param throttler   slow this function down as not to take too much cpu
-  void evictForSlabRelease(const SlabReleaseContext& ctx,
-                           Item& item,
-                           util::Throttler& throttler);
+  void evictForSlabRelease(Item& item);
 
-  // Helper function to evict a normal item for slab release
+  // Helper function to create PutToken
   //
-  // @return last handle for corresponding to item on success. empty handle on
-  // failure. caller can retry if needed.
-  WriteHandle evictNormalItemForSlabRelease(Item& item);
-
-  // Helper function to evict a child item for slab release
-  // As a side effect, the parent item is also evicted
-  //
-  // @return  last handle to the parent item of the child on success. empty
-  // handle on failure. caller can retry.
-  WriteHandle evictChainedItemForSlabRelease(ChainedItem& item);
+  // @return valid token if the item should be written to NVM cache.
+  typename NvmCacheT::PutToken createPutToken(Item& item);
 
   // Helper function to remove a item if expired.
   //
@@ -1835,6 +1863,22 @@ class CacheAllocator : public CacheBase {
     folly::annotate_ignore_thread_sanitizer_guard g(__FILE__, __LINE__);
     auto slabsSkipped = allocator_->forEachAllocation(std::forward<Fn>(f));
     stats().numReaperSkippedSlabs.add(slabsSkipped);
+  }
+
+  // exposed for the background evictor to iterate through the memory and evict
+  // in batch. This should improve insertion path for tiered memory config
+  size_t traverseAndEvictItems(unsigned int /* pid */,
+                               unsigned int /* cid */,
+                               size_t /* batch */) {
+    throw std::runtime_error("Not supported yet!");
+  }
+
+  // exposed for the background promoter to iterate through the memory and
+  // promote in batch. This should improve find latency
+  size_t traverseAndPromoteItems(unsigned int /* pid */,
+                                 unsigned int /* cid */,
+                                 size_t /* batch */) {
+    throw std::runtime_error("Not supported yet!");
   }
 
   // returns true if nvmcache is enabled and we should write this item to
@@ -1985,6 +2029,124 @@ class CacheAllocator : public CacheBase {
                      : false;
   }
 
+  // returns the background mover stats
+  BackgroundMoverStats getBackgroundMoverStats(MoverDir direction) const {
+    auto stats = BackgroundMoverStats{};
+    if (direction == MoverDir::Evict) {
+      for (auto& bg : backgroundEvictor_)
+        stats += bg->getStats();
+    } else if (direction == MoverDir::Promote) {
+      for (auto& bg : backgroundPromoter_)
+        stats += bg->getStats();
+    }
+    return stats;
+  }
+
+  std::map<PoolId, std::map<ClassId, uint64_t>> getBackgroundMoverClassStats(
+      MoverDir direction) const {
+    std::map<PoolId, std::map<ClassId, uint64_t>> stats;
+
+    if (direction == MoverDir::Evict) {
+      for (auto& bg : backgroundEvictor_) {
+        for (auto& pid : bg->getClassStats()) {
+          for (auto& cid : pid.second) {
+            stats[pid.first][cid.first] += cid.second;
+          }
+        }
+      }
+    } else if (direction == MoverDir::Promote) {
+      for (auto& bg : backgroundPromoter_) {
+        for (auto& pid : bg->getClassStats()) {
+          for (auto& cid : pid.second) {
+            stats[pid.first][cid.first] += cid.second;
+          }
+        }
+      }
+    }
+
+    return stats;
+  }
+
+  bool tryGetHandleWithWaitContextForMovingItem(Item& item,
+                                                WriteHandle& handle);
+
+  class MoveCtx {
+   public:
+    MoveCtx() {}
+
+    ~MoveCtx() {
+      // prevent any further enqueue to waiters
+      // Note: we don't need to hold locks since no one can enqueue
+      // after this point.
+      wakeUpWaiters();
+    }
+
+    // record the item handle. Upon destruction we will wake up the waiters
+    // and pass a clone of the handle to the callBack. By default we pass
+    // a null handle
+    void setItemHandle(WriteHandle _it) { it = std::move(_it); }
+
+    // enqueue a waiter into the waiter list
+    // @param  waiter       WaitContext
+    void addWaiter(std::shared_ptr<WaitContext<ReadHandle>> waiter) {
+      XDCHECK(waiter);
+      waiters.push_back(std::move(waiter));
+    }
+
+    size_t numWaiters() const { return waiters.size(); }
+
+   private:
+    // notify all pending waiters that are waiting for the fetch.
+    void wakeUpWaiters() {
+      bool refcountOverflowed = false;
+      for (auto& w : waiters) {
+        // If refcount overflowed earlier, then we will return miss to
+        // all subsequent waiters.
+        if (refcountOverflowed) {
+          w->set(WriteHandle{});
+          continue;
+        }
+
+        try {
+          w->set(it.clone());
+        } catch (const exception::RefcountOverflow&) {
+          // We'll return a miss to the user's pending read,
+          // so we should enqueue a delete via NvmCache.
+          // TODO: cache.remove(it);
+          refcountOverflowed = true;
+        }
+      }
+    }
+
+    WriteHandle it; // will be set when Context is being filled
+    std::vector<std::shared_ptr<WaitContext<ReadHandle>>> waiters; // list of
+                                                                   // waiters
+  };
+  using MoveMap =
+      folly::F14ValueMap<folly::StringPiece,
+                         std::unique_ptr<MoveCtx>,
+                         folly::HeterogeneousAccessHash<folly::StringPiece>>;
+
+  static size_t getShardForKey(folly::StringPiece key) {
+    return folly::Hash()(key) % kShards;
+  }
+
+  MoveMap& getMoveMapForShard(size_t shard) {
+    return movesMap_[shard].movesMap_;
+  }
+
+  MoveMap& getMoveMap(folly::StringPiece key) {
+    return getMoveMapForShard(getShardForKey(key));
+  }
+
+  std::unique_lock<std::mutex> acquireMoveLockForShard(size_t shard) {
+    return std::unique_lock<std::mutex>(moveLock_[shard].moveLock_);
+  }
+
+  // Bump the number of times handle wait blocks. This is called from
+  // ItemHandle's wait context logic.
+  void bumpHandleWaitBlocks() { stats().numHandleWaitBlocks.inc(); }
+
   // BEGIN private members
 
   // Whether the memory allocator for this cache allocator was created on shared
@@ -2031,7 +2193,7 @@ class CacheAllocator : public CacheBase {
   typename Item::PtrCompressor compressor_;
 
   // Lock to synchronize addition of a new pool and its resizing/rebalancing
-  folly::SharedMutex poolsResizeAndRebalanceLock_;
+  mutable folly::SharedMutex poolsResizeAndRebalanceLock_;
 
   // container for the allocations which are currently being memory managed by
   // the cache allocator.
@@ -2065,16 +2227,36 @@ class CacheAllocator : public CacheBase {
   // free memory monitor
   std::unique_ptr<MemoryMonitor> memMonitor_;
 
+  // background evictor
+  std::vector<std::unique_ptr<BackgroundMover<CacheT>>> backgroundEvictor_;
+  std::vector<std::unique_ptr<BackgroundMover<CacheT>>> backgroundPromoter_;
+
   // check whether a pool is a slabs pool
   std::array<bool, MemoryPoolManager::kMaxPools> isCompactCachePool_{};
 
   // lock to serilize access of isCompactCachePool_ array, including creation of
   // compact cache pools
-  folly::SharedMutex compactCachePoolsLock_;
+  mutable folly::SharedMutex compactCachePoolsLock_;
 
   // mutex protecting the creation and destruction of workers poolRebalancer_,
   // poolResizer_, poolOptimizer_, memMonitor_, reaper_
   mutable std::mutex workersMutex_;
+
+  static constexpr size_t kShards = 8192; // TODO: need to define right value
+
+  struct MovesMapShard {
+    alignas(folly::hardware_destructive_interference_size) MoveMap movesMap_;
+  };
+
+  struct MoveLock {
+    alignas(folly::hardware_destructive_interference_size) std::mutex moveLock_;
+  };
+
+  // a map of all pending moves
+  std::vector<MovesMapShard> movesMap_;
+
+  // a map of move locks for each shard
+  std::vector<MoveLock> moveLock_;
 
   // time when the ram cache was first created
   const uint32_t cacheCreationTime_{0};
@@ -2109,6 +2291,7 @@ class CacheAllocator : public CacheBase {
   // Make this friend to give access to acquire and release
   friend ReadHandle;
   friend ReaperAPIWrapper<CacheT>;
+  friend BackgroundMoverAPIWrapper<CacheT>;
   friend class CacheAPIWrapperForNvm<CacheT>;
   friend class FbInternalRuntimeUpdateWrapper<CacheT>;
   friend class objcache2::ObjectCache<CacheT>;

@@ -18,8 +18,7 @@
 
 #include "cachelib/allocator/CacheStatsInternal.h"
 
-namespace facebook {
-namespace cachelib {
+namespace facebook::cachelib {
 namespace detail {
 
 void Stats::init() {
@@ -51,7 +50,7 @@ struct SizeVerify {};
 
 void Stats::populateGlobalCacheStats(GlobalCacheStats& ret) const {
 #ifndef SKIP_SIZE_VERIFY
-  SizeVerify<sizeof(Stats)> a = SizeVerify<16176>{};
+  SizeVerify<sizeof(Stats)> a = SizeVerify<16272>{};
   std::ignore = a;
 #endif
   ret.numCacheGets = numCacheGets.get();
@@ -139,6 +138,8 @@ void Stats::populateGlobalCacheStats(GlobalCacheStats& ret) const {
   ret.numEvictionFailureFromParentMoving = evictFailParentMove.get();
   ret.numAbortedSlabReleases = numAbortedSlabReleases.get();
   ret.numReaperSkippedSlabs = numReaperSkippedSlabs.get();
+
+  ret.numHandleWaitBlocks = numHandleWaitBlocks.get();
 }
 
 } // namespace detail
@@ -317,14 +318,6 @@ uint64_t PoolStats::maxEvictionAge() const {
       ->second.getEvictionAge();
 }
 
-uint64_t PoolStats::numEvictableItems() const noexcept {
-  uint64_t n = 0;
-  for (const auto& s : cacheStats) {
-    n += s.second.numEvictableItems();
-  }
-  return n;
-}
-
 double CCacheStats::hitRatio() const {
   return util::hitRatioCalc(get, getMiss);
 }
@@ -364,5 +357,4 @@ void RateMap::exportStats(
   }
 }
 
-} // namespace cachelib
-} // namespace facebook
+} // namespace facebook::cachelib

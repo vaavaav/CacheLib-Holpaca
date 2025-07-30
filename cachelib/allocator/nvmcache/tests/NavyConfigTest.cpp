@@ -43,6 +43,8 @@ const uint64_t deviceMetadataSize = 1024 * 1024 * 1024;
 const uint64_t fileSize = 10 * 1024 * 1024;
 const bool truncateFile = false;
 const uint32_t deviceMaxWriteSize = 4 * 1024 * 1024;
+const navy::IoEngine ioEngine = navy::IoEngine::IoUring;
+const unsigned int qDepth = 64;
 
 // BlockCache settings
 const uint32_t blockCacheRegionSize = 16 * 1024 * 1024;
@@ -87,6 +89,7 @@ void setDeviceTestSettings(NavyConfig& config) {
   config.setRaidFiles(raidPaths, fileSize, truncateFile);
   config.setDeviceMetadataSize(deviceMetadataSize);
   config.setDeviceMaxWriteSize(deviceMaxWriteSize);
+  config.enableAsyncIo(qDepth, ioEngine == navy::IoEngine::IoUring);
 }
 
 void setBlockCacheTestSettings(NavyConfig& config) {
@@ -135,6 +138,7 @@ TEST(NavyConfigTest, DefaultVal) {
   EXPECT_EQ(blockCacheConfig.isLruEnabled(), true);
   EXPECT_EQ(blockCacheConfig.getRegionSize(), 16 * 1024 * 1024);
   EXPECT_EQ(blockCacheConfig.getCleanRegions(), 1);
+  EXPECT_EQ(blockCacheConfig.getCleanRegionThreads(), 1);
   EXPECT_TRUE(blockCacheConfig.getSFifoSegmentRatio().empty());
   EXPECT_EQ(blockCacheConfig.getDataChecksum(), true);
   EXPECT_EQ(blockCacheConfig.getNumInMemBuffers(), 2);
@@ -183,10 +187,14 @@ TEST(NavyConfigTest, Serialization) {
   expectedConfigMap["navyConfig::fileSize"] = "10485760";
   expectedConfigMap["navyConfig::truncateFile"] = "false";
   expectedConfigMap["navyConfig::deviceMaxWriteSize"] = "4194304";
+  expectedConfigMap["navyConfig::ioEngine"] = "io_uring";
+  expectedConfigMap["navyConfig::QDepth"] = "64";
+  expectedConfigMap["navyConfig::enableFDP"] = "0";
 
   expectedConfigMap["navyConfig::blockCacheLru"] = "false";
   expectedConfigMap["navyConfig::blockCacheRegionSize"] = "16777216";
   expectedConfigMap["navyConfig::blockCacheCleanRegions"] = "4";
+  expectedConfigMap["navyConfig::blockCacheCleanRegionThreads"] = "1";
   expectedConfigMap["navyConfig::blockCacheReinsertionHitsThreshold"] = "111";
   expectedConfigMap["navyConfig::blockCacheReinsertionPctThreshold"] = "0";
   expectedConfigMap["navyConfig::blockCacheNumInMemBuffers"] = "8";
@@ -205,6 +213,9 @@ TEST(NavyConfigTest, Serialization) {
   expectedConfigMap["navyConfig::readerThreads"] = "40";
   expectedConfigMap["navyConfig::writerThreads"] = "40";
   expectedConfigMap["navyConfig::navyReqOrderingShards"] = "30";
+  expectedConfigMap["navyConfig::maxNumReads"] = "0";
+  expectedConfigMap["navyConfig::maxNumWrites"] = "0";
+  expectedConfigMap["navyConfig::stackSize"] = "0";
 
   EXPECT_EQ(configMap, expectedConfigMap);
 }
@@ -242,30 +253,58 @@ TEST(NavyConfigTest, AdmissionPolicy) {
 }
 
 TEST(NavyConfigTest, Device) {
-  NavyConfig config1{};
-  config1.setBlockSize(blockSize);
-  config1.setDeviceMetadataSize(deviceMetadataSize);
-  EXPECT_EQ(config1.getBlockSize(), blockSize);
-  EXPECT_EQ(config1.getDeviceMetadataSize(), deviceMetadataSize);
+  {
+    NavyConfig config{};
+    config.setBlockSize(blockSize);
+    config.setDeviceMetadataSize(deviceMetadataSize);
+    EXPECT_EQ(config.getBlockSize(), blockSize);
+    EXPECT_EQ(config.getDeviceMetadataSize(), deviceMetadataSize);
 
-  // set simple file
-  config1.setSimpleFile(fileName, fileSize, truncateFile);
-  EXPECT_EQ(config1.getFileName(), fileName);
-  EXPECT_EQ(config1.getFileSize(), fileSize);
-  EXPECT_EQ(config1.getTruncateFile(), truncateFile);
-  EXPECT_THROW(config1.setRaidFiles(raidPaths, fileSize, truncateFile),
-               std::invalid_argument);
-
-  // set RAID files
-  NavyConfig config2{};
-  EXPECT_THROW(config2.setRaidFiles(raidPathsInvalid, fileSize, truncateFile),
-               std::invalid_argument);
-  config2.setRaidFiles(raidPaths, fileSize, truncateFile);
-  EXPECT_EQ(config2.getRaidPaths(), raidPaths);
-  EXPECT_EQ(config2.getFileSize(), fileSize);
-  EXPECT_EQ(config1.getTruncateFile(), truncateFile);
-  EXPECT_THROW(config2.setSimpleFile(fileName, fileSize, truncateFile),
-               std::invalid_argument);
+    // set simple file
+    config.setSimpleFile(fileName, fileSize, truncateFile);
+    EXPECT_EQ(config.getFileName(), fileName);
+    EXPECT_EQ(config.getFileSize(), fileSize);
+    EXPECT_EQ(config.getTruncateFile(), truncateFile);
+    EXPECT_THROW(config.setRaidFiles(raidPaths, fileSize, truncateFile),
+                 std::invalid_argument);
+  }
+  {
+    // set RAID files
+    NavyConfig config{};
+    EXPECT_THROW(config.setRaidFiles(raidPathsInvalid, fileSize, truncateFile),
+                 std::invalid_argument);
+    config.setRaidFiles(raidPaths, fileSize, truncateFile);
+    EXPECT_EQ(config.getRaidPaths(), raidPaths);
+    EXPECT_EQ(config.getFileSize(), fileSize);
+    EXPECT_EQ(config.getTruncateFile(), truncateFile);
+    EXPECT_THROW(config.setSimpleFile(fileName, fileSize, truncateFile),
+                 std::invalid_argument);
+  }
+  {
+    // set io engines
+    NavyConfig config{};
+    EXPECT_EQ(config.getIoEngine(), navy::IoEngine::Sync);
+    EXPECT_EQ(config.getQDepth(), 0);
+    config.enableAsyncIo(1, false);
+    EXPECT_EQ(config.getIoEngine(), navy::IoEngine::LibAio);
+    EXPECT_EQ(config.getQDepth(), 1);
+    config.enableAsyncIo(64, true);
+    EXPECT_EQ(config.getIoEngine(), navy::IoEngine::IoUring);
+    EXPECT_EQ(config.getQDepth(), 64);
+  }
+  {
+    // set async io via job scheduler settings
+    NavyConfig config{};
+    config.setReaderAndWriterThreads(4, 4);
+    EXPECT_EQ(config.getIoEngine(), navy::IoEngine::Sync);
+    EXPECT_EQ(config.getQDepth(), 0);
+    config.setReaderAndWriterThreads(4, 4, 4, 4);
+    EXPECT_EQ(config.getIoEngine(), navy::IoEngine::IoUring);
+    EXPECT_EQ(config.getQDepth(), 1);
+    config.enableAsyncIo(64, false);
+    EXPECT_EQ(config.getIoEngine(), navy::IoEngine::LibAio);
+    EXPECT_EQ(config.getQDepth(), 64);
+  }
 }
 
 TEST(NavyConfigTest, BlockCache) {

@@ -20,8 +20,6 @@
 #include <folly/Random.h>
 
 #include <chrono>
-#include <mutex>
-#include <shared_mutex>
 
 #include "cachelib/common/Hash.h"
 #include "cachelib/navy/bighash/Bucket.h"
@@ -29,9 +27,7 @@
 #include "cachelib/navy/common/Utils.h"
 #include "cachelib/navy/serialization/Serialization.h"
 
-namespace facebook {
-namespace cachelib {
-namespace navy {
+namespace facebook::cachelib::navy {
 
 constexpr uint32_t BigHash::kFormatVersion;
 
@@ -92,7 +88,8 @@ BigHash::BigHash(Config&& config, ValidConfigTag)
       cacheBaseOffset_{config.cacheBaseOffset},
       numBuckets_{config.numBuckets()},
       bloomFilter_{std::move(config.bloomFilter)},
-      device_{*config.device} {
+      device_{*config.device},
+      placementHandle_{device_.allocatePlacementHandle()} {
   XLOGF(INFO,
         "BigHash created: buckets: {}, bucket size: {}, base offset: {}",
         numBuckets_,
@@ -147,7 +144,7 @@ std::pair<Status, std::string> BigHash::getRandomAlloc(Buffer& value) {
   Bucket* bucket{nullptr};
   Buffer buffer;
   {
-    std::unique_lock<folly::SharedMutex> lock{getMutex(bid)};
+    std::unique_lock<SharedMutex> lock{getMutex(bid)};
     buffer = readBucket(bid);
     if (buffer.isNull()) {
       ioErrorCount_.inc();
@@ -294,7 +291,7 @@ Status BigHash::insert(HashedKey hk, BufferView value) {
       };
 
   {
-    std::unique_lock<folly::SharedMutex> lock{getMutex(bid)};
+    std::unique_lock<SharedMutex> lock{getMutex(bid)};
     auto buffer = readBucket(bid);
     if (buffer.isNull()) {
       ioErrorCount_.inc();
@@ -310,20 +307,16 @@ Status BigHash::insert(HashedKey hk, BufferView value) {
 
     // rebuild / fix the bloom filter before we move the buffer to do the
     // actual write
-    if (bloomFilter_) {
-      if (removed + evicted == 0) {
-        // In case nothing was removed or evicted, we can just add
-        bloomFilter_->set(bid.index(), hk.keyHash());
-      } else {
-        bfRebuild(bid, bucket);
-      }
+    if (removed + evicted == 0) {
+      // In case nothing was removed or evicted, we can just add
+      bfSet(bid, hk.keyHash());
+    } else {
+      bfRebuild(bid, bucket);
     }
 
     const auto res = writeBucket(bid, std::move(buffer));
     if (!res) {
-      if (bloomFilter_) {
-        bloomFilter_->clear(bid.index());
-      }
+      bfClear(bid);
       ioErrorCount_.inc();
       return Status::DeviceError;
     }
@@ -355,11 +348,7 @@ Status BigHash::insert(HashedKey hk, BufferView value) {
 
 bool BigHash::couldExist(HashedKey hk) {
   const auto bid = getBucketId(hk);
-  bool canExist;
-  {
-    std::shared_lock<folly::SharedMutex> lock{getMutex(bid)};
-    canExist = !bfReject(bid, hk.keyHash());
-  }
+  bool canExist = !bfReject(bid, hk.keyHash());
 
   // the caller is not likely to issue a subsequent lookup when we return
   // false. hence tag this as a lookup. If we return the key can exist, the
@@ -370,18 +359,22 @@ bool BigHash::couldExist(HashedKey hk) {
   return canExist;
 }
 
+uint64_t BigHash::estimateWriteSize(HashedKey, BufferView) const {
+  return bucketSize_;
+}
+
 Status BigHash::lookup(HashedKey hk, Buffer& value) {
   const auto bid = getBucketId(hk);
   lookupCount_.inc();
 
   Bucket* bucket{nullptr};
   Buffer buffer;
+
   // scope of the lock is only needed until we read and mutate state for the
   // bucket. Once the bucket is read, the buffer is local and we can find
   // without holding the lock.
   {
-    std::shared_lock<folly::SharedMutex> lock{getMutex(bid)};
-
+    std::shared_lock<SharedMutex> lock{getMutex(bid)};
     if (bfReject(bid, hk.keyHash())) {
       return Status::NotFound;
     }
@@ -420,11 +413,12 @@ Status BigHash::remove(HashedKey hk) {
     valueCopy = Buffer{value};
   };
 
+  if (bfReject(bid, hk.keyHash())) {
+    return Status::NotFound;
+  }
+
   {
-    std::unique_lock<folly::SharedMutex> lock{getMutex(bid)};
-    if (bfReject(bid, hk.keyHash())) {
-      return Status::NotFound;
-    }
+    std::unique_lock<SharedMutex> lock{getMutex(bid)};
 
     auto buffer = readBucket(bid);
     if (buffer.isNull()) {
@@ -442,15 +436,11 @@ Status BigHash::remove(HashedKey hk) {
 
     // We compute bloom filter before writing the bucket because when encryption
     // is enabled, we will "move" the bucket content into writeBucket().
-    if (bloomFilter_) {
-      bfRebuild(bid, bucket);
-    }
+    bfRebuild(bid, bucket);
 
     const auto res = writeBucket(bid, std::move(buffer));
     if (!res) {
-      if (bloomFilter_) {
-        bloomFilter_->clear(bid.index());
-      }
+      bfClear(bid);
       ioErrorCount_.inc();
       return Status::DeviceError;
     }
@@ -472,18 +462,44 @@ Status BigHash::remove(HashedKey hk) {
   return Status::Ok;
 }
 
+inline void BigHash::bfSet(BucketId bid, uint64_t keyHash) {
+  if (!bloomFilter_) {
+    return;
+  }
+
+  std::lock_guard<folly::SpinLock> lg{getBfLock(bid)};
+  bloomFilter_->set(bid.index(), keyHash);
+}
+
+inline void BigHash::bfClear(BucketId bid) {
+  if (!bloomFilter_) {
+    return;
+  }
+
+  std::lock_guard<folly::SpinLock> lg{getBfLock(bid)};
+  bloomFilter_->clear(bid.index());
+}
+
 bool BigHash::bfReject(BucketId bid, uint64_t keyHash) const {
-  if (bloomFilter_) {
-    bfProbeCount_.inc();
-    if (!bloomFilter_->couldExist(bid.index(), keyHash)) {
-      bfRejectCount_.inc();
-      return true;
-    }
+  if (!bloomFilter_) {
+    return false;
+  }
+
+  std::lock_guard<folly::SpinLock> lg{getBfLock(bid)};
+  bfProbeCount_.inc();
+  if (!bloomFilter_->couldExist(bid.index(), keyHash)) {
+    bfRejectCount_.inc();
+    return true;
   }
   return false;
 }
 
 void BigHash::bfRebuild(BucketId bid, const Bucket* bucket) {
+  if (!bloomFilter_) {
+    return;
+  }
+
+  std::lock_guard<folly::SpinLock> lg{getBfLock(bid)};
   bfRebuildCount_.inc();
   XDCHECK(bloomFilter_);
   bloomFilter_->clear(bid.index());
@@ -535,8 +551,7 @@ Buffer BigHash::readBucket(BucketId bid) {
 bool BigHash::writeBucket(BucketId bid, Buffer buffer) {
   auto* bucket = reinterpret_cast<Bucket*>(buffer.data());
   bucket->setChecksum(Bucket::computeChecksum(buffer.view()));
-  return device_.write(getBucketOffset(bid), std::move(buffer));
+  return device_.write(
+      getBucketOffset(bid), std::move(buffer), placementHandle_);
 }
-} // namespace navy
-} // namespace cachelib
-} // namespace facebook
+} // namespace facebook::cachelib::navy

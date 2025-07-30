@@ -17,7 +17,7 @@
 #include "cachelib/cachebench/util/Config.h"
 
 #include <folly/FileUtil.h>
-#include <folly/json.h>
+#include <folly/json/json.h>
 
 #include <unordered_map>
 
@@ -67,12 +67,14 @@ StressorConfig::StressorConfig(const folly::dynamic& configJson) {
 
   JSONSetVal(configJson, checkNvmCacheWarmUp);
 
+  JSONSetVal(configJson, useCombinedLockForIterators);
+
   if (configJson.count("poolDistributions")) {
     for (auto& it : configJson["poolDistributions"]) {
-      poolDistributions.push_back(DistributionConfig(it, configPath));
+      poolDistributions.emplace_back(it, configPath);
     }
   } else {
-    poolDistributions.push_back(DistributionConfig(configJson, configPath));
+    poolDistributions.emplace_back(configJson, configPath);
   }
 
   if (configJson.count("replayGeneratorConfig")) {
@@ -88,7 +90,7 @@ StressorConfig::StressorConfig(const folly::dynamic& configJson) {
   // If you added new fields to the configuration, update the JSONSetVal
   // to make them available for the json configs and increment the size
   // below
-  checkCorrectSize<StressorConfig, 496>();
+  checkCorrectSize<StressorConfig, 512>();
 }
 
 bool StressorConfig::usesChainedItems() const {
@@ -199,6 +201,8 @@ ReplayGeneratorConfig::ReplayGeneratorConfig(const folly::dynamic& configJson) {
   JSONSetVal(configJson, relaxedSerialIntervalMs);
   JSONSetVal(configJson, numAggregationFields);
   JSONSetVal(configJson, numExtraFields);
+  JSONSetVal(configJson, blockSizeKB);
+  JSONSetVal(configJson, chunkSizeKB);
   JSONSetVal(configJson, statsPerAggField);
 
   if (configJson.count("mlAdmissionConfig")) {
@@ -213,7 +217,7 @@ ReplayGeneratorConfig::ReplayGeneratorConfig(const folly::dynamic& configJson) {
         "Unsupported request serialization mode: {}", replaySerializationMode));
   }
 
-  checkCorrectSize<ReplayGeneratorConfig, 128>();
+  checkCorrectSize<ReplayGeneratorConfig, 136>();
 }
 
 ReplayGeneratorConfig::SerializeMode

@@ -22,8 +22,7 @@
 #include <stdexcept>
 #include <thread>
 
-namespace facebook {
-namespace cachelib {
+namespace facebook::cachelib {
 
 PoolRebalancer::PoolRebalancer(CacheBase& cache,
                                std::shared_ptr<RebalanceStrategy> strategy,
@@ -154,5 +153,4 @@ RebalancerStats PoolRebalancer::getStats() const noexcept {
   return stats;
 }
 
-} // namespace cachelib
-} // namespace facebook
+} // namespace facebook::cachelib

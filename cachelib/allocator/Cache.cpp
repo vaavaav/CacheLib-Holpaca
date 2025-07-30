@@ -21,8 +21,7 @@
 #include "cachelib/allocator/RebalanceStrategy.h"
 #include "cachelib/common/PercentileStats.h"
 
-namespace facebook {
-namespace cachelib {
+namespace facebook::cachelib {
 
 void CacheBase::setRebalanceStrategy(
     PoolId pid, std::shared_ptr<RebalanceStrategy> strategy) {
@@ -105,8 +104,6 @@ void CacheBase::updatePoolStats(const std::string& statPrefix,
   uint64_t evictionDelta = counters_.getDelta(evictionKey);
 
   counters_.updateCount(prefix + "items", stats.numItems());
-  counters_.updateCount(prefix + "items.evictable", stats.numEvictableItems());
-
   counters_.updateDelta(prefix + "hits", stats.numPoolGetHits);
   counters_.updateCount(prefix + "free_memory_bytes", stats.freeMemoryBytes());
   counters_.updateCount(prefix + "slabs.free", stats.mpStats.freeSlabs);
@@ -203,6 +200,18 @@ void CacheBase::updateGlobalCacheStats(const std::string& statPrefix) const {
     return util::narrow_cast<uint64_t>(res);
   };
 
+  auto uploadStatsNanoToMicro =
+      util::CounterVisitor{[this](folly::StringPiece name, double val) {
+        constexpr unsigned int nanosInMicro = 1000;
+        counters_.updateCount(name.toString(),
+                              static_cast<uint64_t>(val) / nanosInMicro);
+      }};
+
+  auto uploadStats =
+      util::CounterVisitor{[this](folly::StringPiece name, double val) {
+        counters_.updateCount(name.toString(), static_cast<uint64_t>(val));
+      }};
+
   const auto memStats = getCacheMemoryStats();
   counters_.updateCount(statPrefix + "mem.advised_size", memStats.advisedSize);
   counters_.updateCount(
@@ -236,6 +245,55 @@ void CacheBase::updateGlobalCacheStats(const std::string& statPrefix) const {
       memStats.configuredRamCacheSize + memStats.nvmCacheSize);
 
   const auto stats = getGlobalCacheStats();
+
+  // Eviction Stats
+  //   Note that ram evictions can be higher than cache evictions. For example,
+  //   if an item is evicted from ram but it still has a copy in nvm, then
+  //   this does not count as an eviction. Only when this is item is evicted
+  //   from both ram and nvm, this is counted as a single eviction from cache.
+  // Ram Evictions: item evicted from ram but it can be inserted into nvm
+  const std::string ramEvictionKey = statPrefix + "ram.evictions";
+  counters_.updateDelta(ramEvictionKey, stats.numEvictions);
+  // Nvm Evictions: item evicted from nvm but it can be still in ram
+  const std::string nvmEvictionKey = statPrefix + "nvm.evictions";
+  counters_.updateDelta(nvmEvictionKey, stats.numNvmEvictions);
+  // Cache Evictions: item leaves the cache entirely because of evictions from
+  //                  ram or nvm. No need to enable itemDestructor
+  counters_.updateDelta(statPrefix + "cache.evictions",
+                        stats.numCacheEvictions);
+
+  // Destructor Stats
+  //   These are only populated when destructor callback is supplied. They
+  //   are only called when an item is removed/evicted from both ram and nvm.
+  counters_.updateDelta(statPrefix + "cache.destructor_calls.ram",
+                        stats.numRamDestructorCalls);
+  counters_.updateDelta(statPrefix + "cache.destructor_calls.nvm",
+                        stats.numNvmDestructorCalls);
+
+  // get the new delta to see if uploading any eviction age stats or lifetime
+  // stats makes sense.
+  uint64_t ramEvictionDelta = counters_.getDelta(ramEvictionKey);
+  if (ramEvictionDelta) {
+    visitEstimates(uploadStats, stats.ramEvictionAgeSecs,
+                   statPrefix + "ram.eviction_age_secs");
+    visitEstimates(uploadStats, stats.ramItemLifeTimeSecs,
+                   statPrefix + "ram.item_lifetime_secs");
+  }
+
+  // get the new delta to see if uploading any eviction age stats or lifetime
+  // stats makes sense.
+  uint64_t nvmEvictionDelta = counters_.getDelta(nvmEvictionKey);
+  if (nvmEvictionDelta) {
+    visitEstimates(uploadStats, stats.nvmSmallLifetimeSecs,
+                   statPrefix + "nvm.item_lifetime_secs.small");
+    visitEstimates(uploadStats, stats.nvmLargeLifetimeSecs,
+                   statPrefix + "nvm.item_lifetime_secs.large");
+    visitEstimates(uploadStats, stats.nvmEvictionSecondsPastExpiry,
+                   statPrefix + "nvm.evictions.secs_past_expiry");
+    visitEstimates(uploadStats, stats.nvmEvictionSecondsToExpiry,
+                   statPrefix + "nvm.evictions.secs_to_expiry");
+  }
+
   counters_.updateDelta(statPrefix + "cache.alloc_attempts",
                         stats.allocAttempts);
   counters_.updateDelta(statPrefix + "cache.eviction_attempts",
@@ -244,11 +302,7 @@ void CacheBase::updateGlobalCacheStats(const std::string& statPrefix) const {
                         stats.allocFailures);
   counters_.updateDelta(statPrefix + "cache.invalid_allocs",
                         stats.invalidAllocs);
-  const std::string ramEvictionKey = statPrefix + "ram.evictions";
-  counters_.updateDelta(ramEvictionKey, stats.numEvictions);
-  // get the new delta to see if uploading any eviction age stats or lifetime
-  // stats makes sense.
-  uint64_t ramEvictionDelta = counters_.getDelta(ramEvictionKey);
+
   counters_.updateDelta(statPrefix + "cache.gets", stats.numCacheGets);
   counters_.updateDelta(statPrefix + "cache.gets.miss", stats.numCacheGetMiss);
   counters_.updateDelta(statPrefix + "cache.gets.expiries",
@@ -256,16 +310,10 @@ void CacheBase::updateGlobalCacheStats(const std::string& statPrefix) const {
   counters_.updateDelta(statPrefix + "cache.removes", stats.numCacheRemoves);
   counters_.updateDelta(statPrefix + "cache.removes.ram_hits",
                         stats.numCacheRemoveRamHits);
-  counters_.updateDelta(statPrefix + "cache.evictions",
-                        stats.numCacheEvictions);
   counters_.updateDelta(statPrefix + "cache.refcount_overflows",
                         stats.numRefcountOverflow);
   counters_.updateDelta(statPrefix + "cache.destructors.exceptions",
                         stats.numDestructorExceptions);
-  counters_.updateDelta(statPrefix + "cache.destructor_calls.ram",
-                        stats.numRamDestructorCalls);
-  counters_.updateDelta(statPrefix + "cache.destructor_calls.nvm",
-                        stats.numNvmDestructorCalls);
   counters_.updateDelta(statPrefix + "cache.aborted_slab_releases",
                         stats.numAbortedSlabReleases);
 
@@ -343,18 +391,6 @@ void CacheBase::updateGlobalCacheStats(const std::string& statPrefix) const {
 
   counters_.updateCount(statPrefix + "nvm.enabled", stats.nvmCacheEnabled);
 
-  auto uploadStatsNanoToMicro =
-      util::CounterVisitor{[this](folly::StringPiece name, double val) {
-        constexpr unsigned int nanosInMicro = 1000;
-        counters_.updateCount(name.toString(),
-                              static_cast<uint64_t>(val) / nanosInMicro);
-      }};
-
-  auto uploadStats =
-      util::CounterVisitor{[this](folly::StringPiece name, double val) {
-        counters_.updateCount(name.toString(), static_cast<uint64_t>(val));
-      }};
-
   if (stats.nvmCacheEnabled) {
     counters_.updateDelta(statPrefix + "nvm.alloc_attempts",
                           stats.numNvmAllocAttempts);
@@ -387,12 +423,6 @@ void CacheBase::updateGlobalCacheStats(const std::string& statPrefix) const {
     counters_.updateDelta(statPrefix + "nvm.puts.encode_failure",
                           stats.numNvmPutEncodeFailure);
 
-    const std::string nvmEvictionKey = statPrefix + "nvm.evictions";
-    counters_.updateDelta(nvmEvictionKey, stats.numNvmEvictions);
-
-    // get the new delta to see if uploading any eviction age stats or lifetime
-    // stats makes sense.
-    uint64_t nvmEvictionDelta = counters_.getDelta(nvmEvictionKey);
     counters_.updateDelta(statPrefix + "nvm.evictions.clean",
                           stats.numNvmCleanEvict);
     counters_.updateDelta(statPrefix + "nvm.evictions.unclean",
@@ -403,6 +433,7 @@ void CacheBase::updateGlobalCacheStats(const std::string& statPrefix) const {
                           stats.numNvmExpiredEvict);
     counters_.updateDelta(statPrefix + "nvm.evictions.filtered_on_compaction",
                           stats.numNvmCompactionFiltered);
+
     counters_.updateDelta(statPrefix + "nvm.deletes", stats.numNvmDeletes);
     counters_.updateDelta(statPrefix + "nvm.deletes.fast",
                           stats.numNvmSkippedDeletes);
@@ -425,18 +456,6 @@ void CacheBase::updateGlobalCacheStats(const std::string& statPrefix) const {
                    statPrefix + "nvm.insert.latency_us");
     visitEstimates(uploadStatsNanoToMicro, stats.nvmRemoveLatencyNs,
                    statPrefix + "nvm.remove.latency_us");
-
-    if (nvmEvictionDelta) {
-      visitEstimates(uploadStats, stats.nvmSmallLifetimeSecs,
-                     statPrefix + "nvm.item_lifetime_secs.small");
-      visitEstimates(uploadStats, stats.nvmLargeLifetimeSecs,
-                     statPrefix + "nvm.item_lifetime_secs.large");
-      visitEstimates(uploadStats, stats.nvmEvictionSecondsPastExpiry,
-                     statPrefix + "nvm.evictions.secs_past_expiry");
-      visitEstimates(uploadStats, stats.nvmEvictionSecondsToExpiry,
-                     statPrefix + "nvm.evictions.secs_to_expiry");
-    }
-
     visitEstimates(uploadStats, stats.nvmPutSize,
                    statPrefix + "nvm.incoming_item_size_bytes");
 
@@ -460,12 +479,6 @@ void CacheBase::updateGlobalCacheStats(const std::string& statPrefix) const {
                  statPrefix + "move.chained.latency_us");
   visitEstimates(uploadStatsNanoToMicro, stats.moveRegularLatencyNs,
                  statPrefix + "move.regular.latency_us");
-  if (ramEvictionDelta) {
-    visitEstimates(uploadStats, stats.ramEvictionAgeSecs,
-                   statPrefix + "ram.eviction_age_secs");
-    visitEstimates(uploadStats, stats.ramItemLifeTimeSecs,
-                   statPrefix + "ram.item_lifetime_secs");
-  }
 
   const auto cacheHitRate = calculateCacheHitRate(statPrefix);
   counters_.updateCount(statPrefix + "cache.hit_rate",
@@ -474,6 +487,9 @@ void CacheBase::updateGlobalCacheStats(const std::string& statPrefix) const {
                         util::narrow_cast<uint64_t>(cacheHitRate.ram));
   counters_.updateCount(statPrefix + "nvm.hit_rate",
                         util::narrow_cast<uint64_t>(cacheHitRate.nvm));
+
+  counters_.updateDelta(statPrefix + "cache.handle_wait_block",
+                        stats.numHandleWaitBlocks);
 }
 
 CacheBase::CacheHitRate CacheBase::calculateCacheHitRate(
@@ -533,5 +549,4 @@ void CacheBase::exportStats(
 
   return counters_.exportStats(aggregationInterval, cb);
 }
-} // namespace cachelib
-} // namespace facebook
+} // namespace facebook::cachelib

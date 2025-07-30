@@ -28,7 +28,7 @@
 #ifdef CACHEBENCH_FB_ENV
 #include "cachelib/cachebench/facebook/FbDep.h"
 #include "cachelib/cachebench/facebook/fb303/FB303ThriftServer.h"
-#include "cachelib/cachebench/facebook/odsl_exporter/OdslExporter.h"
+#include "cachelib/facebook/odsl_exporter/OdslExporter.h"
 #include "common/init/Init.h"
 #else
 #include <folly/init/Init.h>
@@ -36,7 +36,7 @@
 #endif
 
 #ifdef CACHEBENCH_FB_ENV
-DEFINE_bool(export_to_ods, true, "Upload cachelib stats to ODS");
+DEFINE_bool(export_to_ods, false, "Upload cachelib stats to ODS");
 DEFINE_int32(fb303_port,
              0,
              "Port for cachebench fb303 service. If 0, do not export to fb303. "
@@ -85,17 +85,24 @@ void setupSignalHandler() {
 
 void setupTimeoutHandler() {
   if (FLAGS_timeout_seconds > 0) {
-    stopperThread.reset(new std::thread([] {
+    stopperThread = std::make_unique<std::thread>([] {
       folly::EventBase eb;
       eb.runAfterDelay(
-          []() {
+          [&eb]() {
+            XLOGF(INFO,
+                  "Stopping due to timeout {} seconds",
+                  FLAGS_timeout_seconds);
             if (runnerInstance) {
               runnerInstance->abort();
             }
+            eb.terminateLoopSoon();
           },
           FLAGS_timeout_seconds * 1000);
       eb.loopForever();
-    }));
+      // We give another few seconds for the graceful shutdown to complete
+      eb.runAfterDelay([]() { XCHECK(false); }, 30 * 1000);
+      eb.loopForever();
+    });
     stopperThread->detach();
   }
 }
@@ -113,6 +120,7 @@ bool checkArgsValidity() {
 }
 
 int main(int argc, char** argv) {
+  using namespace facebook::cachelib;
   using namespace facebook::cachelib::cachebench;
 
 #ifdef CACHEBENCH_FB_ENV
@@ -124,10 +132,10 @@ int main(int argc, char** argv) {
   CacheBenchConfig config(FLAGS_json_test_config,
                           customizeCacheConfigForFacebook,
                           customizeStressorConfigForFacebook);
-  std::unique_ptr<OdslExporter> odslExporter_;
+  std::unique_ptr<util::OdslExporter> odslExporter_;
   std::unique_ptr<FB303ThriftService> fb303_;
   if (FLAGS_fb303_port == 0 && FLAGS_export_to_ods) {
-    odslExporter_ = std::make_unique<OdslExporter>();
+    odslExporter_ = std::make_unique<util::OdslExporter>(kCachebenchCacheName);
   } else if (FLAGS_fb303_port > 0) {
     fb303_ = std::make_unique<FB303ThriftService>(FLAGS_fb303_port);
   }
@@ -156,4 +164,6 @@ int main(int argc, char** argv) {
     std::cout << "Invalid configuration. Exception: " << e.what() << std::endl;
     return 1;
   }
+
+  return 0;
 }

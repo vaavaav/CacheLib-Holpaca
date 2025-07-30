@@ -24,9 +24,7 @@
 
 #include "cachelib/common/Utils.h"
 
-namespace facebook {
-namespace cachelib {
-namespace navy {
+namespace facebook::cachelib::navy {
 
 std::unique_ptr<JobScheduler> createOrderedThreadPoolJobScheduler(
     unsigned int readerThreads,
@@ -50,13 +48,6 @@ ThreadPoolExecutor::ThreadPoolExecutor(uint32_t numThreads,
           q->process();
         });
   }
-}
-
-void ThreadPoolExecutor::enqueue(Job job,
-                                 folly::StringPiece name,
-                                 JobQueue::QueuePos pos) {
-  auto index = nextQueue_.fetch_add(1, std::memory_order_relaxed);
-  queues_[index % queues_.size()]->enqueue(std::move(job), name, pos);
 }
 
 void ThreadPoolExecutor::enqueueWithKey(Job job,
@@ -103,30 +94,6 @@ ThreadPoolJobScheduler::ThreadPoolJobScheduler(uint32_t readerThreads,
                                                uint32_t writerThreads)
     : reader_(readerThreads, "reader_pool"),
       writer_(writerThreads, "writer_pool") {}
-
-void ThreadPoolJobScheduler::enqueue(Job job,
-                                     folly::StringPiece name,
-                                     JobType type) {
-  switch (type) {
-  case JobType::Read:
-    reader_.enqueue(std::move(job), name, JobQueue::QueuePos::Back);
-    break;
-  case JobType::Write:
-    writer_.enqueue(std::move(job), name, JobQueue::QueuePos::Back);
-    break;
-  case JobType::Reclaim:
-    writer_.enqueue(std::move(job), name, JobQueue::QueuePos::Front);
-    break;
-  case JobType::Flush:
-    writer_.enqueue(std::move(job), name, JobQueue::QueuePos::Front);
-    break;
-  default:
-    XLOGF(ERR,
-          "JobScheduler: unrecognized job type: {}",
-          static_cast<uint32_t>(type));
-    XDCHECK(false);
-  }
-}
 
 void ThreadPoolJobScheduler::enqueueWithKey(Job job,
                                             folly::StringPiece name,
@@ -255,12 +222,6 @@ void OrderedThreadPoolJobScheduler::scheduleNextJob(uint64_t shard) {
   pendingJobs_[shard].pop_front();
 }
 
-void OrderedThreadPoolJobScheduler::enqueue(Job job,
-                                            folly::StringPiece name,
-                                            JobType type) {
-  scheduler_.enqueue(std::move(job), name, type);
-}
-
 void OrderedThreadPoolJobScheduler::finish() {
   scheduler_.finish();
   XDCHECK_EQ(currSpooled_.get(), 0ULL);
@@ -273,6 +234,4 @@ void OrderedThreadPoolJobScheduler::getCounters(const CounterVisitor& v) const {
   v("navy_req_order_curr_spool_size", currSpooled_.get());
 }
 
-} // namespace navy
-} // namespace cachelib
-} // namespace facebook
+} // namespace facebook::cachelib::navy

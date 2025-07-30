@@ -138,6 +138,12 @@ struct ReplayGeneratorConfig : public JSONConfig {
   // trace sample. E.g., additional ML features can be put here
   uint32_t numExtraFields{0};
 
+  // Used only for BlockChunkReplayGenerator; default 16MB
+  uint32_t blockSizeKB{16 * 1024};
+
+  // Used only for BlockChunkReplayGenerator; default 128KB
+  uint32_t chunkSizeKB{128};
+
   // For each aggregation field, we track the statistics broken down by
   // specific aggregation values. this map specifies the values for which
   // stats are aggregated by per field.
@@ -266,6 +272,8 @@ struct StressorConfig : public JSONConfig {
   // Factor to be divided from the timestamp to get to unit "second"
   // By default, timestamps are in milliseconds.
   uint64_t timestampFactor{1000};
+
+  bool useCombinedLockForIterators{false};
 
   // admission policy for cache.
   std::shared_ptr<StressorAdmPolicy> admPolicy{};

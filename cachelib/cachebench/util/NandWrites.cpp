@@ -19,7 +19,7 @@
 #include <folly/Format.h>
 #include <folly/String.h>
 #include <folly/Subprocess.h>
-#include <folly/json.h>
+#include <folly/json/json.h>
 #include <folly/logging/xlog.h>
 
 #include <algorithm>
@@ -38,7 +38,7 @@ class SubprocessWrapper : public Process {
                     const std::vector<std::string>* env = nullptr)
       : subprocess_(argv, options, executable, env) {}
 
-  virtual ~SubprocessWrapper() {}
+  virtual ~SubprocessWrapper() = default;
 
   virtual std::pair<std::string, std::string> communicate() {
     return subprocess_.communicate();
@@ -121,11 +121,11 @@ std::vector<std::string> getBytesWrittenLine(
   // /ritten/, so that's what we do here. We just use the first matching
   // line.
   std::vector<folly::StringPiece> lines;
-  folly::split("\n", out, lines, true /* ignoreEmpty */);
+  folly::split('\n', out, lines, true /* ignoreEmpty */);
   for (const auto& line : lines) {
     if (line.find("ritten") != std::string::npos) {
       std::vector<std::string> fields;
-      folly::split(" ", line, fields, true /* ignoreEmpty */);
+      folly::split(' ', line, fields, true /* ignoreEmpty */);
       return fields;
     }
   }
@@ -154,7 +154,7 @@ std::optional<uint64_t> getBytesWritten(
   fields[fieldNum].erase(
       std::remove(fields[fieldNum].begin(), fields[fieldNum].end(), ','),
       fields[fieldNum].end());
-  return std::stoll(fields[fieldNum], 0 /* pos */, 0 /* base */) * factor;
+  return std::stoll(fields[fieldNum], nullptr /* pos */, 0 /* base */) * factor;
 }
 
 // The output for a Samsung device looks like:

@@ -259,6 +259,12 @@ void MM2Q::Container<T, HookPtr>::withEvictionIterator(F&& fun) {
 }
 
 template <typename T, MM2Q::Hook<T> T::*HookPtr>
+template <typename F>
+void MM2Q::Container<T, HookPtr>::withContainerLock(F&& fun) {
+  lruMutex_->lock_combine([&fun]() { fun(); });
+}
+
+template <typename T, MM2Q::Hook<T> T::*HookPtr>
 void MM2Q::Container<T, HookPtr>::removeLocked(T& node,
                                                bool doRebalance) noexcept {
   LruType type = getLruType(node);
@@ -335,7 +341,8 @@ bool MM2Q::Container<T, HookPtr>::replace(T& oldNode, T& newNode) noexcept {
       markHot(newNode);
       break;
     case LruType::ColdTail:
-      markTail(newNode); // pass through to also mark cold
+      markTail(newNode);
+      [[fallthrough]]; // pass through to also mark cold
     case LruType::Cold:
       markCold(newNode);
       break;

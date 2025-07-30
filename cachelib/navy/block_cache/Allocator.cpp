@@ -22,11 +22,10 @@
 #include <cassert>
 #include <utility>
 
+#include "cachelib/navy/common/NavyThread.h"
 #include "cachelib/navy/common/Utils.h"
 
-namespace facebook {
-namespace cachelib {
-namespace navy {
+namespace facebook::cachelib::navy {
 
 void RegionAllocator::setAllocationRegion(RegionId rid) {
   XDCHECK(!rid_.valid());
@@ -47,14 +46,14 @@ Allocator::Allocator(RegionManager& regionManager, uint16_t numPriorities)
 }
 
 std::tuple<RegionDescriptor, uint32_t, RelAddress> Allocator::allocate(
-    uint32_t size, uint16_t priority) {
+    uint32_t size, uint16_t priority, bool canWait) {
   XDCHECK_LT(priority, allocators_.size());
   RegionAllocator* ra = &allocators_[priority];
   if (size == 0 || size > regionManager_.regionSize()) {
     return std::make_tuple(RegionDescriptor{OpenStatus::Error}, size,
                            RelAddress());
   }
-  return allocateWith(*ra, size);
+  return allocateWith(*ra, size, canWait);
 } // namespace cachelib
 
 // Allocates using region allocator @ra. If region is full, we take another
@@ -64,8 +63,8 @@ std::tuple<RegionDescriptor, uint32_t, RelAddress> Allocator::allocate(
 // new reclamation job to refill it. Caller must close the region after data
 // written to the slot.
 std::tuple<RegionDescriptor, uint32_t, RelAddress> Allocator::allocateWith(
-    RegionAllocator& ra, uint32_t size) {
-  LockGuard l{ra.getLock()};
+    RegionAllocator& ra, uint32_t size, bool canWait) {
+  std::unique_lock<TimedMutex> lock{ra.getLock()};
   RegionId rid = ra.getAllocationRegion();
   if (rid.valid()) {
     auto& region = regionManager_.getRegion(rid);
@@ -85,10 +84,23 @@ std::tuple<RegionDescriptor, uint32_t, RelAddress> Allocator::allocateWith(
   // if we are here, we either didn't find a valid region or the region we
   // picked ended up being full.
   XDCHECK(!rid.valid());
-  auto status = regionManager_.getCleanRegion(rid);
-  if (status != OpenStatus::Ready) {
+
+  if (canWait && !getCurrentNavyThread()) {
+    // Waiting on main thread could cause indefinite blocking, so do not wait
+    canWait = false;
+  }
+
+  auto [status, waiter] = regionManager_.getCleanRegion(rid, canWait);
+  if (status == OpenStatus::Retry) {
+    lock.unlock();
+    if (waiter) {
+      allocRetryWaits_.inc();
+      waiter->baton_.wait();
+    }
     return std::make_tuple(RegionDescriptor{status}, size, RelAddress{});
   }
+  XDCHECK(status == OpenStatus::Ready);
+  XDCHECK(!waiter);
 
   // we got a region fresh off of reclaim. Need to initialize it.
   auto& region = regionManager_.getRegion(rid);
@@ -116,23 +128,24 @@ void Allocator::flushAndReleaseRegionFromRALocked(RegionAllocator& ra,
 
 void Allocator::flush() {
   for (auto& ra : allocators_) {
-    std::lock_guard<std::mutex> lock{ra.getLock()};
+    std::lock_guard<TimedMutex> lock{ra.getLock()};
     flushAndReleaseRegionFromRALocked(ra, false /* async */);
   }
 }
 
 void Allocator::reset() {
+  allocRetryWaits_.set(0);
   regionManager_.reset();
   for (auto& ra : allocators_) {
-    std::lock_guard<std::mutex> lock{ra.getLock()};
+    std::lock_guard<TimedMutex> lock{ra.getLock()};
     ra.reset();
   }
 }
 
 void Allocator::getCounters(const CounterVisitor& visitor) const {
+  visitor("navy_bc_alloc_retries_waits", allocRetryWaits_.get(),
+          CounterVisitor::CounterType::RATE);
   regionManager_.getCounters(visitor);
 }
 
-} // namespace navy
-} // namespace cachelib
-} // namespace facebook
+} // namespace facebook::cachelib::navy

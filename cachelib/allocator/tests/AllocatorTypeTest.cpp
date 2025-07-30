@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include "cachelib/allocator/MemoryTierCacheConfig.h"
 #include "cachelib/allocator/tests/BaseAllocatorTest.h"
 #include "cachelib/allocator/tests/TestBase.h"
 
@@ -226,6 +227,11 @@ TYPED_TEST(BaseAllocatorTest, ReaperSkippingSlabTraversalWhileSlabReleasing) {
 }
 
 TYPED_TEST(BaseAllocatorTest, ReaperShutDown) { this->testReaperShutDown(); }
+TYPED_TEST(BaseAllocatorTest, ReaperShutDownFile) {
+  this->testReaperShutDown(
+      {MemoryTierCacheConfig::fromShm().setRatio(1).setMemBind(
+          std::string("0"))});
+}
 
 TYPED_TEST(BaseAllocatorTest, ShutDownWithActiveHandles) {
   this->testShutDownWithActiveHandles();
@@ -282,8 +288,13 @@ TYPED_TEST(BaseAllocatorTest, AddChainedItemMultiThreadWithMovingAndSync) {
   this->testAddChainedItemMultithreadWithMovingAndSync();
 }
 
-TYPED_TEST(BaseAllocatorTest, TransferChainWhileMoving) {
-  this->testTransferChainWhileMoving();
+TYPED_TEST(BaseAllocatorTest, TransferChainAfterMoving) {
+  this->testTransferChainAfterMoving();
+}
+
+TYPED_TEST(BaseAllocatorTest, ChainedItemParentAcquireAfterMove) {
+  ASSERT_EXIT(this->testChainedItemParentAcquireAfterMoveLoop(),
+              testing::ExitedWithCode(0), ".*");
 }
 
 TYPED_TEST(BaseAllocatorTest, AddAndPopChainedItemMultithread) {
@@ -317,10 +328,6 @@ TYPED_TEST(BaseAllocatorTest, ChainedAllocsIteration) {
 
 TYPED_TEST(BaseAllocatorTest, ReplaceChainedItem) {
   this->testReplaceChainedItem();
-}
-
-TYPED_TEST(BaseAllocatorTest, MovingSyncCorrectness) {
-  this->testMovingSyncCorrectness();
 }
 
 TYPED_TEST(BaseAllocatorTest, StatsChainCount) {

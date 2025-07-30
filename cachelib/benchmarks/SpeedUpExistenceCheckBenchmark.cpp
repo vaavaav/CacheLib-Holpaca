@@ -88,16 +88,16 @@ struct BucketWithKey {
 };
 
 struct SharedMutex {
-  auto getReadLock() { return folly::SharedMutex::ReadHolder{l}; }
-  auto getWriteLock() { return folly::SharedMutex::WriteHolder{l}; }
-  folly::SharedMutex l{};
+  auto getReadLock() { return std::shared_lock{l}; }
+  auto getWriteLock() { return std::unique_lock{l}; }
+  mutable folly::SharedMutex l{};
 };
 
 struct alignas(folly::hardware_destructive_interference_size)
     SharedMutexAligned {
-  auto getReadLock() { return folly::SharedMutex::ReadHolder{l}; }
-  auto getWriteLock() { return folly::SharedMutex::WriteHolder{l}; }
-  folly::SharedMutex l{};
+  auto getReadLock() { return std::shared_lock{l}; }
+  auto getWriteLock() { return std::unique_lock{l}; }
+  mutable folly::SharedMutex l{};
 };
 
 struct SpinLock {

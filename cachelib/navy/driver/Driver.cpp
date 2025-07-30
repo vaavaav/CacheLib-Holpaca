@@ -18,16 +18,14 @@
 
 #include <folly/Format.h>
 #include <folly/Range.h>
-#include <folly/synchronization/Baton.h>
+#include <folly/fibers/Baton.h>
 
 #include "cachelib/common/Serialization.h"
 #include "cachelib/navy/admission_policy/DynamicRandomAP.h"
 #include "cachelib/navy/common/Hash.h"
 #include "cachelib/navy/scheduler/JobScheduler.h"
 
-namespace facebook {
-namespace cachelib {
-namespace navy {
+namespace facebook::cachelib::navy {
 namespace {
 // get discrete_distribution based on enginePair sizes.
 std::discrete_distribution<size_t> getDist(
@@ -62,6 +60,7 @@ Driver::Driver(Config&& config, ValidConfigTag)
     : maxConcurrentInserts_{config.maxConcurrentInserts},
       maxParcelMemory_{config.maxParcelMemory},
       metadataSize_{config.metadataSize},
+      useEstimatedWriteSize_{config.useEstimatedWriteSize},
       device_{std::move(config.device)},
       scheduler_{std::move(config.scheduler)},
       selector_{std::move(config.selector)},
@@ -70,11 +69,12 @@ Driver::Driver(Config&& config, ValidConfigTag)
   getRandomAllocDist = getDist(enginePairs_);
   XLOGF(INFO, "Max concurrent inserts: {}", maxConcurrentInserts_);
   XLOGF(INFO, "Max parcel memory: {}", maxParcelMemory_);
+  XLOGF(INFO, "Use Write Estimated Size: {}", useEstimatedWriteSize_);
 }
 
 Driver::~Driver() {
   XLOG(INFO, "Driver: finish scheduler");
-  scheduler_->finish();
+  drain();
   XLOG(INFO, "Driver: finish scheduler successful");
   // Destroy this for safety first
   scheduler_.reset();
@@ -96,8 +96,14 @@ bool Driver::couldExist(HashedKey hk) {
   return enginePairs_[selectEnginePair(hk)].couldExist(hk);
 }
 
+uint64_t Driver::estimateWriteSize(HashedKey hk, BufferView value) const {
+  return useEstimatedWriteSize_
+             ? enginePairs_[selectEnginePair(hk)].estimateWriteSize(hk, value)
+             : hk.key().size() + value.size();
+}
+
 Status Driver::insert(HashedKey key, BufferView value) {
-  folly::Baton<> done;
+  folly::fibers::Baton done;
   Status cbStatus{Status::Ok};
   auto status = insertAsync(key, value,
                             [&done, &cbStatus](Status s, HashedKey /* key */) {
@@ -120,7 +126,8 @@ bool Driver::admissionTest(HashedKey hk, BufferView value) const {
   auto currParcelMemory = parcelMemory_.add_fetch(parcelSize);
   auto currConcurrentInserts = concurrentInserts_.add_fetch(1);
 
-  if (!admissionPolicy_ || admissionPolicy_->accept(hk, value)) {
+  if (!admissionPolicy_ ||
+      admissionPolicy_->accept(hk, value, estimateWriteSize(hk, value))) {
     if (currConcurrentInserts <= maxConcurrentInserts_) {
       if (currParcelMemory <= maxParcelMemory_) {
         acceptedCount_.inc();
@@ -184,8 +191,15 @@ void Driver::removeAsync(HashedKey hk, RemoveCallback cb) {
   enginePairs_[selectEnginePair(hk)].scheduleRemove(hk, std::move(cb));
 }
 
-void Driver::flush() {
+void Driver::drain() {
   scheduler_->finish();
+  for (size_t idx = 0; idx < enginePairs_.size(); idx++) {
+    enginePairs_[idx].drain();
+  }
+}
+
+void Driver::flush() {
+  drain(); // Flush all pending jobs
   for (size_t idx = 0; idx < enginePairs_.size(); idx++) {
     enginePairs_[idx].flush();
   }
@@ -193,7 +207,7 @@ void Driver::flush() {
 
 void Driver::reset() {
   XLOG(INFO, "Reset Navy");
-  scheduler_->finish();
+  drain();
   for (size_t idx = 0; idx < enginePairs_.size(); idx++) {
     enginePairs_[idx].reset();
   }
@@ -308,6 +322,4 @@ std::pair<Status, std::string> Driver::getRandomAlloc(Buffer& value) {
   size_t idx = getRandomAllocDist(getRandomAllocGen);
   return enginePairs_[idx].getRandomAlloc(value);
 }
-} // namespace navy
-} // namespace cachelib
-} // namespace facebook
+} // namespace facebook::cachelib::navy

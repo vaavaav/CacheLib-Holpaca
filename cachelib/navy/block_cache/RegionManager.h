@@ -18,26 +18,29 @@
 
 #include <folly/Random.h>
 #include <folly/container/F14Map.h>
+#include <folly/fibers/TimedMutex.h>
 
 #include <cassert>
 #include <memory>
-#include <mutex>
 #include <utility>
 
 #include "cachelib/common/AtomicCounter.h"
+#include "cachelib/common/ConditionVariable.h"
 #include "cachelib/navy/block_cache/EvictionPolicy.h"
 #include "cachelib/navy/block_cache/Region.h"
 #include "cachelib/navy/block_cache/Types.h"
 #include "cachelib/navy/common/Buffer.h"
 #include "cachelib/navy/common/Device.h"
+#include "cachelib/navy/common/NavyThread.h"
 #include "cachelib/navy/common/Types.h"
-#include "cachelib/navy/scheduler/JobScheduler.h"
 #include "cachelib/navy/serialization/RecordIO.h"
 #include "cachelib/navy/serialization/Serialization.h"
 
 namespace facebook {
 namespace cachelib {
 namespace navy {
+using folly::fibers::TimedMutex;
+using CondWaiter = util::ConditionVariable::Waiter;
 
 // Callback that is used to clear index.
 //   @rid       Region ID
@@ -67,6 +70,9 @@ class RegionManager {
   // @param numCleanRegions           How many regions reclamator maintains in
   //                                  the clean pool
   // @param scheduler                 JobScheduler to run reclamation jobs
+  // @param numWorkers                Number of threads to run reclamation jobs
+  // @param stackSize                 Fiber stack size for each worker thread.
+  //                                  0 for default
   // @param evictCb                   Callback invoked when region evicted
   // @param cleanupCb                 Callback invoked when region cleaned up
   // @param policy                    eviction policy
@@ -80,7 +86,8 @@ class RegionManager {
                 uint64_t baseOffset,
                 Device& device,
                 uint32_t numCleanRegions,
-                JobScheduler& scheduler,
+                uint32_t numWorkers,
+                uint32_t stackSize,
                 RegionEvictCallback evictCb,
                 RegionCleanupCallback cleanupCb,
                 std::unique_ptr<EvictionPolicy> policy,
@@ -89,6 +96,9 @@ class RegionManager {
                 uint16_t inMemBufFlushRetryLimit);
   RegionManager(const RegionManager&) = delete;
   RegionManager& operator=(const RegionManager&) = delete;
+
+  // Destroy the worker thread for safety first
+  ~RegionManager() { workers_.clear(); }
 
   // return the size of usable space
   uint64_t getSize() const {
@@ -154,13 +164,17 @@ class RegionManager {
   }
 
   // Assigns a buffer from buffer pool.
-  std::unique_ptr<Buffer> claimBufferFromPool();
+  std::pair<std::unique_ptr<Buffer>, std::unique_ptr<CondWaiter>>
+  claimBufferFromPool(bool addWaiter);
 
   // Returns the buffer to the pool.
   void returnBufferToPool(std::unique_ptr<Buffer> buf) {
     {
-      std::lock_guard<std::mutex> bufLock{bufferMutex_};
+      std::lock_guard<TimedMutex> bufLock{bufferMutex_};
       buffers_.push_back(std::move(buf));
+      if (bufferCond_.numWaiters() > 0) {
+        bufferCond_.notifyAll();
+      }
     }
     numInMemBufActive_.dec();
   }
@@ -169,6 +183,8 @@ class RegionManager {
   // @addr must be the address returned by Region::open(OpenMode::Write)
   // @buf may be mutated and will be de-allocated at the end of this
   void write(RelAddress addr, Buffer buf);
+
+  bool deviceWrite(RelAddress addr, Buffer buf);
 
   // Returns a buffer with data read from the device the @addr of size bytes
   // @addr must be the address returned by Region::open(OpenMode::Read).
@@ -191,20 +207,12 @@ class RegionManager {
   Region::FlushRes flushBuffer(const RegionId& rid);
 
   // Detaches the buffer from the region and returns the buffer to pool.
-  // Caller is expected to call this until it returns true.
-  //
-  // @returns false if there are active readers when detaching the buffer;
-  //          true otherwise.
-  bool detachBuffer(const RegionId& rid);
+  // This could block if there are active readers
+  void detachBuffer(const RegionId& rid);
 
   // Cleans up the in memory buffer when flushing failure reach the retry limit.
-  // Returns true if the cleanup succeeds and the buffer is detached from the
-  // region; false otherwise.
-  //
-  // Caller is expected to call cleanupBufferOnFlushFailure until true is
-  // returned. This routine is idempotent and is safe to call multiple times
-  // until detachBuffer is done.
-  bool cleanupBufferOnFlushFailure(const RegionId& rid);
+  // This could block if there are active readers or writers
+  void cleanupBufferOnFlushFailure(const RegionId& rid);
 
   // Releases a region that was cleaned up due to in-mem buffer flushing
   // failure.
@@ -236,10 +244,13 @@ class RegionManager {
   // attached to the fetched clean region.
   // Returns OpenStatus::Ready if all the operations are successful;
   // OpenStatus::Retry otherwise.
-  OpenStatus getCleanRegion(RegionId& rid);
+  std::pair<OpenStatus, std::unique_ptr<CondWaiter>> getCleanRegion(
+      RegionId& rid, bool addWaiter);
 
-  // Tries to get a free region first, otherwise evicts one and schedules region
-  // cleanup job (which will add the region to the clean list).
+  // Finish all pending jobs
+  void drain();
+
+  // Schedules region reclaim job to create a clean region
   void startReclaim();
 
   // Releases a region that was evicted during region reclamation.
@@ -253,15 +264,32 @@ class RegionManager {
   void doEviction(RegionId rid, BufferView buffer) const;
 
  private:
-  using LockGuard = std::lock_guard<std::mutex>;
+  using LockGuard = std::lock_guard<TimedMutex>;
   uint64_t physicalOffset(RelAddress addr) const {
     return baseOffset_ + toAbsolute(addr).offset();
   }
 
+  NavyThread& getNextWorker() {
+    return *(workers_[numReclaimScheduled_.add_fetch(1) % workers_.size()]);
+  }
+
+  bool isOnWorker() {
+    auto* thread = getCurrentNavyThread();
+    if (!thread) {
+      return false;
+    }
+
+    return workerSet_.count(thread) > 0;
+  }
+
+  void doReclaim();
+  void doFlushInternal(RegionId rid);
+
   bool deviceWrite(RelAddress addr, BufferView buf);
 
   bool isValidIORange(uint32_t offset, uint32_t size) const;
-  OpenStatus assignBufferToRegion(RegionId rid);
+  std::pair<OpenStatus, std::unique_ptr<CondWaiter>> assignBufferToRegion(
+      RegionId rid, bool addWaiter);
 
   // Initializes the eviction policy. Even on a clean start, we will track all
   // the regions. The difference is that these regions will have no items in
@@ -281,14 +309,21 @@ class RegionManager {
   mutable AtomicCounter physicalWrittenCount_;
   mutable AtomicCounter reclaimRegionErrors_;
 
-  mutable std::mutex cleanRegionsMutex_;
+  mutable TimedMutex cleanRegionsMutex_;
+  mutable util::ConditionVariable cleanRegionsCond_;
   std::vector<RegionId> cleanRegions_;
   const uint32_t numCleanRegions_{};
+  mutable AtomicCounter cleanRegionRetries_;
 
   std::atomic<uint64_t> seqNumber_{0};
 
-  uint32_t reclaimsScheduled_{0};
-  JobScheduler& scheduler_;
+  uint32_t reclaimsOutstanding_{0};
+
+  // The thread that runs the flush and reclaim. For Navy-async thread mode, the
+  // async flushes will be run in-line on fiber by the async NavyThread itself
+  std::vector<std::unique_ptr<NavyThread>> workers_;
+  std::unordered_set<NavyThread*> workerSet_;
+  mutable AtomicCounter numReclaimScheduled_;
 
   const RegionEvictCallback evictCb_;
   const RegionCleanupCallback cleanupCb_;
@@ -307,12 +342,13 @@ class RegionManager {
   mutable AtomicCounter numInMemBufWaitingFlush_;
   mutable AtomicCounter numInMemBufFlushRetries_;
   mutable AtomicCounter numInMemBufFlushFailures_;
-  mutable AtomicCounter numInMemBufCleanupRetries_;
 
   const uint32_t numInMemBuffers_{0};
   // Locking order is region lock, followed by bufferMutex_;
-  mutable std::mutex bufferMutex_;
+  mutable TimedMutex bufferMutex_;
+  mutable util::ConditionVariable bufferCond_;
   std::vector<std::unique_ptr<Buffer>> buffers_;
+  int placementHandle_;
 };
 } // namespace navy
 } // namespace cachelib

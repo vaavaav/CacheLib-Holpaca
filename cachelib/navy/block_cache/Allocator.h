@@ -16,10 +16,11 @@
 
 #pragma once
 
+#include <folly/fibers/TimedMutex.h>
+
 #include <atomic>
 #include <functional>
 #include <memory>
-#include <mutex>
 #include <stdexcept>
 #include <vector>
 
@@ -31,6 +32,8 @@
 namespace facebook {
 namespace cachelib {
 namespace navy {
+using folly::fibers::TimedMutex;
+
 // Class to allocate a particular size from a region. Not thread safe, caller
 // has to sync access.
 class RegionAllocator {
@@ -58,7 +61,7 @@ class RegionAllocator {
   uint16_t priority() const { return priority_; }
 
   // Returns the mutex lock.
-  std::mutex& getLock() const { return mutex_; }
+  TimedMutex& getLock() const { return mutex_; }
 
  private:
   const uint16_t priority_{};
@@ -66,7 +69,7 @@ class RegionAllocator {
   // The current region id from which we are allocating
   RegionId rid_;
 
-  mutable std::mutex mutex_;
+  mutable TimedMutex mutex_{TimedMutex::Options(false)};
 };
 
 // Size class or stack allocator. Thread safe. Syncs access
@@ -85,6 +88,7 @@ class Allocator {
   //
   // @param size          Allocation size
   // @param priority      Specifies how important this allocation is
+  // @param canWait       If true, wait until allocation can be retried
   //
   // Returns a tuple containing region descriptor, allocated slotSize and
   // allocated address
@@ -96,8 +100,9 @@ class Allocator {
   // When allocating with a priority, the priority must NOT exceed the
   // max priority which is (@numPriorities - 1) specified when constructing
   // this allocator.
-  std::tuple<RegionDescriptor, uint32_t, RelAddress> allocate(
-      uint32_t size, uint16_t priority);
+  std::tuple<RegionDescriptor, uint32_t, RelAddress> allocate(uint32_t size,
+                                                              uint16_t priority,
+                                                              bool canWait);
 
   // Closes the region.
   void close(RegionDescriptor&& rid);
@@ -112,7 +117,7 @@ class Allocator {
   void getCounters(const CounterVisitor& visitor) const;
 
  private:
-  using LockGuard = std::lock_guard<std::mutex>;
+  using LockGuard = std::lock_guard<TimedMutex>;
   Allocator(const Allocator&) = delete;
   Allocator& operator=(const Allocator&) = delete;
 
@@ -123,11 +128,13 @@ class Allocator {
   // Allocates @size bytes in region allocator @ra. If succeed (enough space),
   // returns region descriptor, size and address.
   std::tuple<RegionDescriptor, uint32_t, RelAddress> allocateWith(
-      RegionAllocator& ra, uint32_t size);
+      RegionAllocator& ra, uint32_t size, bool wait);
 
   RegionManager& regionManager_;
   // Multiple allocators when we use priority-based allocation
   std::vector<RegionAllocator> allocators_;
+
+  mutable AtomicCounter allocRetryWaits_;
 };
 } // namespace navy
 } // namespace cachelib

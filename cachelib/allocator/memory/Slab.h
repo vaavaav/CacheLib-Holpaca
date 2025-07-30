@@ -50,6 +50,8 @@ namespace cachelib {
  * independantly by the SlabAllocator.
  */
 
+// identifier for the memory tier
+using TierId = int8_t;
 // identifier for the memory pool
 using PoolId = int8_t;
 // identifier for the allocation class
@@ -165,7 +167,11 @@ struct CACHELIB_PACKED_ATTR SlabHeader {
   void setFlag(SlabHeaderFlag flag) noexcept {
     const uint8_t bitmask =
         static_cast<uint8_t>(1u << static_cast<unsigned int>(flag));
+// FIXME: https://fb.workplace.com/groups/cachelibusers/posts/2345418462311949/
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Watomic-implicit-seq-cst"
     __sync_or_and_fetch(&flags, bitmask);
+#pragma clang diagnostic pop
   }
 
   void unSetFlag(SlabHeaderFlag flag) noexcept {

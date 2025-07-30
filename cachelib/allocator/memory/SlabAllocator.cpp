@@ -40,7 +40,9 @@
 using namespace facebook::cachelib;
 
 namespace {
-size_t roundDownToSlabSize(size_t size) { return size - (size % sizeof(Slab)); }
+static inline size_t roundDownToSlabSize(size_t size) {
+  return size - (size % sizeof(Slab));
+}
 } // namespace
 
 // definitions to avoid ODR violation.
@@ -48,7 +50,6 @@ using PtrType = CompressedPtr::PtrType;
 constexpr uint64_t SlabAllocator::kAddressMask;
 constexpr PtrType CompressedPtr::kAllocIdxMask;
 constexpr unsigned int CompressedPtr::kNumAllocIdxBits;
-constexpr unsigned int CompressedPtr::kNumSlabIdxBits;
 
 constexpr unsigned int SlabAllocator::kLockSleepMS;
 constexpr size_t SlabAllocator::kPagesPerStep;

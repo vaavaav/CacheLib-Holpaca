@@ -227,8 +227,10 @@ void CompactCache<C, A, B>::tableRehash(size_t oldNumChunks,
             // don't relock the same lock (we don't use recursive
             // locks in general)
             bool sameLock = locks_.isSameLock(newBucket, bucket);
-            auto higher_lock =
-                sameLock ? CCWriteHolder() : locks_.lockExclusive(newBucket);
+            auto higher_lock //
+                = sameLock   //
+                      ? std::unique_lock<folly::SharedMutex>()
+                      : locks_.lockExclusive(newBucket);
             if (kHasValues) {
               if (kValuesFixedSize) {
                 bucketSet(newBucket, entry.key(), entry.val());
@@ -274,7 +276,7 @@ void CompactCache<C, A, B>::resize() {
 
   /* Lock resize operations to prevent more than one from occurring
    * at a time */
-  auto lock = folly::SharedMutex::WriteHolder(resizeLock_);
+  auto lock = std::unique_lock(resizeLock_);
 
   size_t newNumChunks = numChunksWanted;
 
@@ -455,7 +457,7 @@ int CompactCache<C, A, B>::callBucketFn(
   /* 4) Call the request handler. */
   if (immutable_bucket) {
     auto lock = locks_.lockShared(timeout, bucket);
-    if (!lock.locked()) {
+    if (!lock.owns_lock()) {
       XDCHECK(timeout > std::chrono::microseconds::zero());
       ++stats_.tlStats().lockTimeout;
       return -2;
@@ -464,7 +466,7 @@ int CompactCache<C, A, B>::callBucketFn(
     rv = (this->*f)(bucket, key, args...);
   } else {
     auto lock = locks_.lockExclusive(timeout, bucket);
-    if (!lock.locked()) {
+    if (!lock.owns_lock()) {
       XDCHECK(timeout > std::chrono::microseconds::zero());
       ++stats_.tlStats().lockTimeout;
       return -2;
@@ -482,7 +484,7 @@ int CompactCache<C, A, B>::callBucketFn(
 
     if (allowPromotions_) {
       auto lock = locks_.lockExclusive(timeout, bucket);
-      if (!lock.locked()) {
+      if (!lock.owns_lock()) {
         XDCHECK(timeout > std::chrono::microseconds::zero());
         ++stats_.tlStats().promoteTimeout;
       } else {
@@ -680,7 +682,7 @@ typename CompactCache<C, A, B>::EntryHandle CompactCache<C, A, B>::bucketFind(
 
 template <typename C, typename A, typename B>
 bool CompactCache<C, A, B>::forEachBucket(const BucketCallBack& cb) {
-  auto lock = folly::SharedMutex::ReadHolder(resizeLock_);
+  auto lock = std::shared_lock(resizeLock_);
 
   // this obtains a resize lock so it cannot be occuring during an actual
   // resize; assert that

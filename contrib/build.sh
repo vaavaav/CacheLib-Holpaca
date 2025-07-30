@@ -63,6 +63,12 @@ build_centos_8()
     || die "failed to install packages for CentOS"
 }
 
+build_centos_9()
+{
+  ./contrib/prerequisites-centos9.sh \
+    || die "failed to install packages for CentOS"
+}
+
 build_rocky_9()
 {
   ./contrib/prerequisites-rocky9.sh \
@@ -89,7 +95,7 @@ build_arch()
 
 build_dependencies()
 {
-  for pkg in zstd googleflags googlelog googletest sparsemap fmt folly fizz wangle fbthrift grpc Shards;
+  for pkg in zstd googleflags googlelog googletest sparsemap fmt folly fizz wangle mvfst fbthrift ;
   do
     # shellcheck disable=SC2086
     ./contrib/build-package.sh $pass_params "$pkg" \
@@ -159,6 +165,7 @@ if test -z "$skip_os_pkgs" ; then
     debian10|debian11) build_debian_10 ;;
     ubuntu18.04|ubuntu20.04|ubuntu21.04|ubuntu22.04) build_ubuntu_18 ;;
     centos8|rocky8.?) build_centos_8 ;;
+    centos9) build_centos_9 ;;
     rocky9.?) build_rocky_9 ;;
     fedora3[456]) build_fedora_34 ;;
     arch*|manjaro*) build_arch ;;

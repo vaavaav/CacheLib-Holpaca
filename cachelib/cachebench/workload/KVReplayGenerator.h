@@ -69,13 +69,31 @@ struct ReqWrapper {
 // the requests are sharded to each stressor by doing hashing over the key.
 class KVReplayGenerator : public ReplayGeneratorBase {
  public:
-  // input format is: key,op,size,op_count,key_size,ttl
-  enum SampleFields { KEY = 0, OP, SIZE, OP_COUNT, KEY_SIZE, TTL, END };
+  // Default order is key,op,size,op_count,key_size,ttl
+  enum SampleFields : uint8_t {
+    KEY = 0,
+    OP,
+    SIZE,
+    OP_COUNT,
+    KEY_SIZE,
+    TTL,
+    OP_TIME,
+    CACHE_HIT,
+    END
+  };
+
+  const ColumnTable columnTable_ = {
+      {SampleFields::OP_TIME, false, {"op_time"}},
+      {SampleFields::KEY, true, {"key"}}, /* required */
+      {SampleFields::KEY_SIZE, false, {"key_size"}},
+      {SampleFields::OP, true, {"op"}}, /* required */
+      {SampleFields::OP_COUNT, false, {"op_count"}},
+      {SampleFields::SIZE, true, {"size"}}, /* required */
+      {SampleFields::CACHE_HIT, false, {"cache_hits"}},
+      {SampleFields::TTL, false, {"ttl"}}};
 
   explicit KVReplayGenerator(const StressorConfig& config)
-      : ReplayGeneratorBase(config),
-        ampFactor_(config.replayGeneratorConfig.ampFactor),
-        traceStream_(config, 0) {
+      : ReplayGeneratorBase(config), traceStream_(config, 0, columnTable_) {
     for (uint32_t i = 0; i < numShards_; ++i) {
       stressorCtxs_.emplace_back(std::make_unique<StressorCtx>(i));
     }
@@ -119,6 +137,11 @@ class KVReplayGenerator : public ReplayGeneratorBase {
   // Parse the request from the trace line and set the ReqWrapper
   bool parseRequest(const std::string& line, std::unique_ptr<ReqWrapper>& req);
 
+  // for unit test
+  bool setHeaderRow(const std::string& header) {
+    return traceStream_.setHeaderRow(header);
+  }
+
  private:
   // Interval at which the submission queue is polled when it is either
   // full (producer) or empty (consumer).
@@ -126,6 +149,7 @@ class KVReplayGenerator : public ReplayGeneratorBase {
   // support blocking read or writes with a timeout
   static constexpr uint64_t checkIntervalUs_ = 100;
   static constexpr size_t kMaxRequests = 10000;
+  static constexpr size_t kMinKeySize = 16;
 
   using ReqQueue = folly::ProducerConsumerQueue<std::unique_ptr<ReqWrapper>>;
 
@@ -166,10 +190,6 @@ class KVReplayGenerator : public ReplayGeneratorBase {
   // stressorIdx_ is used to index.
   std::vector<std::unique_ptr<StressorCtx>> stressorCtxs_;
 
-  // used to select stream in round-robin
-  const size_t ampFactor_;
-
-  std::atomic<size_t> nextStream_{0};
   TraceFileStream traceStream_;
 
   std::thread genWorker_;
@@ -202,34 +222,40 @@ class KVReplayGenerator : public ReplayGeneratorBase {
 
 inline bool KVReplayGenerator::parseRequest(const std::string& line,
                                             std::unique_ptr<ReqWrapper>& req) {
-  // input format is: key,op,size,op_count,key_size,ttl
-  std::vector<folly::StringPiece> fields;
-  folly::split(",", line, fields);
-
-  if (fields.size() <= SampleFields::KEY_SIZE) {
+  if (!traceStream_.setNextLine(line)) {
     return false;
   }
 
-  auto keySizeField = folly::tryTo<size_t>(fields[SampleFields::KEY_SIZE]);
-  auto sizeField = folly::tryTo<size_t>(fields[SampleFields::SIZE]);
-  auto opCountField = folly::tryTo<uint32_t>(fields[SampleFields::OP_COUNT]);
-
-  if (!keySizeField.hasValue() || !sizeField.hasValue() ||
-      !opCountField.hasValue()) {
+  auto sizeField = traceStream_.template getField<size_t>(SampleFields::SIZE);
+  if (!sizeField.hasValue()) {
     return false;
   }
 
   // Set key
-  req->key_ = fields[SampleFields::KEY];
+  req->key_ = traceStream_.template getField<>(SampleFields::KEY).value();
 
-  // Generate key whose size matches with that of the original one.
-  size_t keySize = std::max<size_t>(keySizeField.value(), req->key_.size());
-  // The key size should not exceed 256
-  keySize = std::min<size_t>(keySize, 256);
-  req->key_.resize(keySize, '0');
+  auto keySizeField =
+      traceStream_.template getField<size_t>(SampleFields::KEY_SIZE);
+  if (keySizeField.hasValue()) {
+    // The key is encoded as <encoded key, key size>.
+    // Generate key whose size matches with that of the original one
+    size_t keySize = std::max<size_t>(keySizeField.value(), req->key_.size());
+    // The key size should not exceed 256
+    keySize = std::min<size_t>(keySize, 256);
+    req->key_.resize(keySize, '0');
+  }
+
+  // Convert timestamp to seconds.
+  auto timestampField =
+      traceStream_.template getField<uint64_t>(SampleFields::OP_TIME);
+  if (timestampField.hasValue()) {
+    uint64_t timestampRaw = timestampField.value();
+    uint64_t timestampSeconds = timestampRaw / timestampFactor_;
+    req->req_.timestamp = timestampSeconds;
+  }
 
   // Set op
-  const auto& op = fields[SampleFields::OP];
+  auto op = traceStream_.template getField<>(SampleFields::OP).value();
   // TODO implement GET_LEASE and SET_LEASE emulations
   if (!op.compare("GET") || !op.compare("GET_LEASE")) {
     req->req_.setOp(OpType::kGet);
@@ -245,7 +271,9 @@ inline bool KVReplayGenerator::parseRequest(const std::string& line,
   req->sizes_[0] = sizeField.value();
 
   // Set op_count
-  req->repeats_ = opCountField.value();
+  auto opCountField =
+      traceStream_.template getField<uint32_t>(SampleFields::OP_COUNT);
+  req->repeats_ = opCountField.value_or(1);
   if (!req->repeats_) {
     return false;
   }
@@ -254,12 +282,8 @@ inline bool KVReplayGenerator::parseRequest(const std::string& line,
   }
 
   // Set TTL (optional)
-  if (fields.size() > SampleFields::TTL) {
-    auto ttlField = folly::tryTo<size_t>(fields[SampleFields::TTL]);
-    req->req_.ttlSecs = ttlField.hasValue() ? ttlField.value() : 0;
-  } else {
-    req->req_.ttlSecs = 0;
-  }
+  auto ttlField = traceStream_.template getField<size_t>(SampleFields::TTL);
+  req->req_.ttlSecs = ttlField.value_or(0);
 
   return true;
 }
@@ -272,6 +296,8 @@ inline std::unique_ptr<ReqWrapper> KVReplayGenerator::getReqInternal() {
 
     if (!parseRequest(line, reqWrapper)) {
       parseError++;
+      XLOG_N_PER_MS(ERR, 10, 1000) << folly::sformat(
+          "Parsing error (total {}): {}", parseError.load(), line);
     } else {
       parseSuccess++;
     }
@@ -302,9 +328,9 @@ inline void KVReplayGenerator::genRequests() {
         // Replace the last 4 bytes with thread Id of 4 decimal chars. In doing
         // so, keep at least 10B from the key for uniqueness; 10B is the max
         // number of decimal digits for uint32_t which is used to encode the key
-        if (req->key_.size() > 10) {
+        if (req->key_.size() > kMinKeySize) {
           // trunkcate the key
-          size_t newSize = std::max<size_t>(req->key_.size() - 4, 10u);
+          size_t newSize = std::max<size_t>(req->key_.size() - 4, kMinKeySize);
           req->key_.resize(newSize, '0');
         }
         req->key_.append(folly::sformat("{:04d}", keySuffix));

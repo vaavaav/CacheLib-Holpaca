@@ -247,7 +247,7 @@ Map<K, V, C> Map<K, V, C>::create(CacheType& cache,
                                   uint32_t numBytes) {
   try {
     return Map{cache, pid, key, numEntries, numBytes};
-  } catch (const std::bad_alloc& ex) {
+  } catch (const std::bad_alloc&) {
     return nullptr;
   }
 }
@@ -300,7 +300,7 @@ const typename Map<K, V, C>::EntryValue* Map<K, V, C>::findImpl(
   if (!entry) {
     return nullptr;
   }
-  return &bufferManager_.template get<EntryKeyValue>(entry->addr)->value;
+  return &bufferManager_.template get<EntryKeyValue>(entry->addr)->second;
 }
 
 template <typename K, typename V, typename C>
@@ -370,13 +370,13 @@ typename Map<K, V, C>::InsertOrReplaceResult Map<K, V, C>::insertImpl(
   }
 
   auto* kv = bufferManager_.template get<EntryKeyValue>(addr);
-  std::memcpy(&kv->key, &key, keySize);
-  std::memcpy(&kv->value, &value, valueSize);
+  std::memcpy(&kv->first, &key, keySize);
+  std::memcpy(&kv->second, &value, valueSize);
 
   detail::BufferAddr oldAddr;
   try {
     oldAddr = hashtable_->insertOrReplace(key, addr);
-  } catch (const std::bad_alloc& e) {
+  } catch (const std::bad_alloc&) {
     bufferManager_.remove(addr);
     throw;
   }
@@ -437,13 +437,13 @@ void Map<K, V, C>::compact() {
   for (auto itr = begin(), endItr = end(); itr != endItr; ++itr) {
     detail::BufferAddr oldAddr;
     try {
-      oldAddr = hashtable_->insertOrReplace(itr->key, itr.getAsBufferAddr());
-    } catch (const std::bad_alloc& ex) {
+      oldAddr = hashtable_->insertOrReplace(itr->first, itr.getAsBufferAddr());
+    } catch (const std::bad_alloc&) {
       throw std::runtime_error(
           "hashtable cannot have insufficient space during a compaction");
     }
     if (!oldAddr) {
-      auto key = itr->key;
+      auto key = itr->first;
       throw std::runtime_error(folly::sformat(
           "old entry is missing, this should never happen. key: {}", key));
     }

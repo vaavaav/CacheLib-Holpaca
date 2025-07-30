@@ -275,6 +275,13 @@ std::enable_if_t<std::is_arithmetic<T>::value, T> getAlignedSize(
   const T rem = size % alignment;
   return rem == 0 ? size : size + alignment - rem;
 }
+
+// @return ceiling of the quotient
+template <typename T>
+std::enable_if_t<std::is_arithmetic<T>::value, T> getDivCeiling(
+    T dividend, uint32_t divisor) {
+  return (dividend + divisor - 1) / divisor;
+}
 // creates a new mapping in the virtual address space of the calling process
 // aligned by the size of Slab.
 //
@@ -332,6 +339,9 @@ void removePath(const std::string& name);
 // file. throws error if the path does not exist or any other error
 bool isDir(const std::string& path);
 
+// returns true if the path exists and is a regular file
+bool isBlk(const std::string& name);
+
 // return a random path to temp directory  with the prefix
 std::string getUniqueTempDir(folly::StringPiece prefix);
 
@@ -376,6 +386,37 @@ std::pair<double, double> getMeanDeviation(std::vector<T> v) {
   });
 
   return std::make_pair(mean, sqrt(accum / v.size()));
+}
+
+template <typename Value, typename P, typename F>
+bool atomicUpdateValue(Value* refPtr,
+                       Value* oldValue,
+                       P&& predicate,
+                       F&& newValueF) {
+  unsigned int nCASFailures = 0;
+  constexpr bool isWeak = false;
+  Value curValue = __atomic_load_n(refPtr, __ATOMIC_RELAXED);
+  while (true) {
+    if (!predicate(curValue)) {
+      return false;
+    }
+
+    const Value newValue = newValueF(curValue);
+    if (__atomic_compare_exchange_n(refPtr, &curValue, newValue, isWeak,
+                                    __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
+      if (oldValue) {
+        *oldValue = curValue;
+      }
+      return true;
+    }
+
+    if ((++nCASFailures % 4) == 0) {
+      // this pause takes up to 40 clock cycles on intel and the lock cmpxchgl
+      // above should take about 100 clock cycles. we pause once every 400
+      // cycles or so if we are extremely unlucky.
+      folly::asm_volatile_pause();
+    }
+  }
 }
 
 // To force the compiler to NOT optimize away the store/load

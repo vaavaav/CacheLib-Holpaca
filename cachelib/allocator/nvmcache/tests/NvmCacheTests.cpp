@@ -137,7 +137,6 @@ TEST_F(NvmCacheTest, BasicGet) {
 
 TEST_F(NvmCacheTest, CouldExistFast) {
   // Enable fast negative lookup
-  this->allocConfig_.nvmConfig->enableFastNegativeLookups = true;
   this->makeCache();
 
   auto& nvm = this->cache();
@@ -269,7 +268,10 @@ TEST_F(NvmCacheTest, EvictToNvmGetCheckCtime) {
 }
 
 TEST_F(NvmCacheTest, EvictToNvmExpired) {
-  auto& nvm = this->cache();
+  // Test with TTL, so the reaper should be disabled
+  auto& config = this->getConfig();
+  config.reaperInterval = std::chrono::milliseconds(0);
+  auto& nvm = this->makeCache();
   auto pid = this->poolId();
 
   const uint32_t ttl = 5; // 5 second ttl
@@ -294,7 +296,10 @@ TEST_F(NvmCacheTest, EvictToNvmExpired) {
 }
 
 TEST_F(NvmCacheTest, ReadFromNvmExpired) {
-  auto& nvm = this->cache();
+  // Test with TTL, so the reaper should be disabled
+  auto& config = this->getConfig();
+  config.reaperInterval = std::chrono::milliseconds(0);
+  auto& nvm = this->makeCache();
   auto pid = this->poolId();
 
   const uint32_t ttl = 5; // 5 second ttl
@@ -421,7 +426,7 @@ TEST_F(NvmCacheTest, ConcurrentFills) {
     std::vector<std::thread> thr;
     std::atomic<bool> missed = false;
     for (unsigned int j = 0; j < 50; j++) {
-      thr.push_back(std::thread([&]() {
+      thr.emplace_back([&]() {
         auto hdl = nvm.find(key);
         hdl.wait();
         if (!hdl) {
@@ -429,7 +434,7 @@ TEST_F(NvmCacheTest, ConcurrentFills) {
         } else {
           ASSERT_EQ(id, *hdl->getMemoryAs<int>());
         }
-      }));
+      });
     }
     for (unsigned int j = 0; j < 50; j++) {
       thr[j].join();
@@ -1596,9 +1601,12 @@ TEST_F(NvmCacheTest, NavyStats) {
   EXPECT_TRUE(cs("navy_bc_removes"));
   EXPECT_TRUE(cs("navy_bc_num_regions"));
   EXPECT_TRUE(cs("navy_bc_num_clean_regions"));
+  EXPECT_TRUE(cs("navy_bc_num_clean_region_retries"));
   EXPECT_TRUE(cs("navy_bc_succ_removes"));
   EXPECT_TRUE(cs("navy_bc_eviction_lookup_misses"));
   EXPECT_TRUE(cs("navy_bc_alloc_errors"));
+  EXPECT_TRUE(cs("navy_bc_alloc_retries"));
+  EXPECT_TRUE(cs("navy_bc_alloc_retries_waits"));
   EXPECT_TRUE(cs("navy_bc_logical_written"));
   EXPECT_TRUE(cs("navy_bc_hole_count"));
   EXPECT_TRUE(cs("navy_bc_hole_bytes"));
@@ -1625,7 +1633,6 @@ TEST_F(NvmCacheTest, NavyStats) {
   EXPECT_TRUE(cs("navy_bc_inmem_active"));
   EXPECT_TRUE(cs("navy_bc_inmem_flush_retries"));
   EXPECT_TRUE(cs("navy_bc_inmem_flush_failures"));
-  EXPECT_TRUE(cs("navy_bc_inmem_cleanup_retries"));
 
   // navy::LruPolicy
   EXPECT_TRUE(cs("navy_bc_lru_secs_since_insertion_avg"));
@@ -2072,7 +2079,7 @@ TEST_F(NvmCacheTest, testEvictCB) {
     auto handle = cache.allocate(pid, key, 100);
     ASSERT_NE(nullptr, handle.get());
     std::memcpy(handle->getMemory(), val.data(), val.size());
-    auto buf = toIOBuf(makeNvmItem(handle));
+    auto buf = toIOBuf(makeNvmItem(*handle));
     evictCB(HashedKey{key.data()},
             navy::BufferView(buf.length(), buf.data()),
             navy::DestructorEvent::Recycled);
@@ -2093,7 +2100,7 @@ TEST_F(NvmCacheTest, testEvictCB) {
     ASSERT_NE(nullptr, handle.get());
     std::memcpy(handle->getMemory(), val.data(), val.size());
     cache.insertOrReplace(handle);
-    auto buf = toIOBuf(makeNvmItem(handle));
+    auto buf = toIOBuf(makeNvmItem(*handle));
     evictCB(HashedKey{key.data()},
             navy::BufferView(buf.length(), buf.data()),
             navy::DestructorEvent::Recycled);
@@ -2112,7 +2119,7 @@ TEST_F(NvmCacheTest, testEvictCB) {
     std::memcpy(handle->getMemory(), val.data(), val.size());
     cache.insertOrReplace(handle);
     handle->markNvmClean();
-    auto buf = toIOBuf(makeNvmItem(handle));
+    auto buf = toIOBuf(makeNvmItem(*handle));
     evictCB(HashedKey{key.data()},
             navy::BufferView(buf.length(), buf.data()),
             navy::DestructorEvent::Recycled);
@@ -2128,7 +2135,7 @@ TEST_F(NvmCacheTest, testEvictCB) {
     auto handle = cache.allocate(pid, key, 100);
     ASSERT_NE(nullptr, handle.get());
     std::memcpy(handle->getMemory(), val.data(), val.size());
-    auto buf = toIOBuf(makeNvmItem(handle));
+    auto buf = toIOBuf(makeNvmItem(*handle));
     evictCB(HashedKey{key.data()},
             navy::BufferView(buf.length(), buf.data()),
             navy::DestructorEvent::Removed);
@@ -2147,7 +2154,7 @@ TEST_F(NvmCacheTest, testEvictCB) {
     ASSERT_NE(nullptr, handle.get());
     std::memcpy(handle->getMemory(), val.data(), val.size());
     cache.insertOrReplace(handle);
-    auto buf = toIOBuf(makeNvmItem(handle));
+    auto buf = toIOBuf(makeNvmItem(*handle));
     evictCB(HashedKey{key.data()},
             navy::BufferView(buf.length(), buf.data()),
             navy::DestructorEvent::Removed);
@@ -2166,7 +2173,7 @@ TEST_F(NvmCacheTest, testEvictCB) {
     std::memcpy(handle->getMemory(), val.data(), val.size());
     cache.insertOrReplace(handle);
     handle->markNvmClean();
-    auto buf = toIOBuf(makeNvmItem(handle));
+    auto buf = toIOBuf(makeNvmItem(*handle));
     evictCB(HashedKey{key.data()},
             navy::BufferView(buf.length(), buf.data()),
             navy::DestructorEvent::Removed);
@@ -2179,8 +2186,10 @@ TEST_F(NvmCacheTest, testEvictCB) {
 void verifyItem(const Item& item, const Item& iobufItem) {
   ASSERT_EQ(item.isChainedItem(), iobufItem.isChainedItem());
   ASSERT_EQ(item.hasChainedItem(), iobufItem.hasChainedItem());
-  ASSERT_EQ(item.getCreationTime(), iobufItem.getCreationTime());
-  ASSERT_EQ(item.getExpiryTime(), iobufItem.getExpiryTime());
+  if (!item.isChainedItem()) {
+    ASSERT_EQ(item.getCreationTime(), iobufItem.getCreationTime());
+    ASSERT_EQ(item.getExpiryTime(), iobufItem.getExpiryTime());
+  }
   ASSERT_EQ(item.getSize(), iobufItem.getSize());
   ASSERT_EQ(
       0, std::memcmp(item.getMemory(), iobufItem.getMemory(), item.getSize()));
@@ -2228,7 +2237,7 @@ TEST_F(NvmCacheTest, testCreateItemAsIOBuf) {
     ASSERT_NE(nullptr, handle.get());
     std::memcpy(handle->getMemory(), val.data(), val.size());
 
-    auto dipper = makeNvmItem(handle);
+    auto dipper = makeNvmItem(*handle);
     auto iobuf = createItemAsIOBuf(key, *dipper);
 
     verifyItemInIOBuf(key, handle, iobuf.get());
@@ -2240,7 +2249,7 @@ TEST_F(NvmCacheTest, testCreateItemAsIOBuf) {
     ASSERT_NE(nullptr, handle.get());
     std::memcpy(handle->getMemory(), val.data(), val.size());
 
-    auto dipper = makeNvmItem(handle);
+    auto dipper = makeNvmItem(*handle);
     auto iobuf = createItemAsIOBuf(key, *dipper);
 
     verifyItemInIOBuf(key, handle, iobuf.get());
@@ -2269,7 +2278,7 @@ TEST_F(NvmCacheTest, testCreateItemAsIOBufChained) {
       cache.addChainedItem(handle, std::move(chainedIt));
     }
 
-    auto dipper = makeNvmItem(handle);
+    auto dipper = makeNvmItem(*handle);
     auto iobuf = createItemAsIOBuf(key, *dipper);
 
     verifyItemInIOBuf(key, handle, iobuf.get());
@@ -2307,11 +2316,13 @@ TEST_F(NvmCacheTest, testSampleItem) {
   auto pid = this->poolId();
 
   size_t nKeys = 0;
+  static constexpr unsigned kEvenKeyTTL = 5;
   // Insert items until either RAM or NVM cache is full
   for (; numEvicted == 0 && nKeys < numMax; nKeys++) {
+    unsigned ttl = nKeys % 2 == 0 ? kEvenKeyTTL : 0;
     auto key = folly::sformat("key{}", nKeys);
     // the pool's allocsize is
-    auto it = cache.allocate(pid, key, 16 * 1024);
+    auto it = cache.allocate(pid, key, 16 * 1024, ttl);
     ASSERT_NE(nullptr, it);
     cache.insertOrReplace(it);
 
@@ -2322,13 +2333,14 @@ TEST_F(NvmCacheTest, testSampleItem) {
     ASSERT_TRUE(this->pushToNvmCacheFromRamForTesting(key));
   }
 
-  // remove even numbered keys to make holes
-  for (size_t i = 0; i < nKeys; i += 2) {
-    auto key = folly::sformat("key{}", i);
-    cache.remove(key);
-  }
   // wait for async remove finish
   cache.flushNvmCache();
+
+  XLOGF(INFO,
+        "Wait {}s until all items with even numbered keys are expired by TTL",
+        kEvenKeyTTL + 1);
+  /* sleep override */ std::this_thread::sleep_for(
+      std::chrono::seconds(kEvenKeyTTL + 1));
 
   {
     std::unique_lock<std::mutex> l(mtx);
@@ -2340,10 +2352,19 @@ TEST_F(NvmCacheTest, testSampleItem) {
   for (size_t i = 0; i < nKeys * 10; i++) {
     auto sample = cache.getSampleItem();
     if (sample.isValid()) {
+      auto keyStr = sample->getKey().toString();
       {
         std::unique_lock<std::mutex> l(mtx);
-        ASSERT_EQ(1, cachedKeys.count(sample->getKey().toString()));
+        ASSERT_EQ(1, cachedKeys.count(keyStr));
       }
+
+      unsigned idx;
+      ASSERT_GT(std::sscanf(keyStr.c_str(), "key%u", &idx), 0);
+      ASSERT_TRUE(idx % 2 != 0) << fmt::format(
+          "Error: expired item with key ({}) and nvm ({}) returned",
+          keyStr,
+          sample.isNvmItem());
+
       if (sample.isNvmItem()) {
         numNvm++;
       } else {

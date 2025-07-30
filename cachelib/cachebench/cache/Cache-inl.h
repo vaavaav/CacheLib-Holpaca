@@ -105,6 +105,8 @@ Cache<Allocator>::Cache(const CacheConfig& config,
     allocatorConfig_.usePosixForShm();
   }
 
+  allocatorConfig_.setMemoryLocking(config_.lockMemory);
+
   if (!config_.memoryTierConfigs.empty()) {
     allocatorConfig_.configureMemoryTiers(config_.memoryTierConfigs);
   }
@@ -134,31 +136,50 @@ Cache<Allocator>::Cache(const CacheConfig& config,
   if (!isRamOnly()) {
     typename Allocator::NvmCacheConfig nvmConfig;
 
-    nvmConfig.enableFastNegativeLookups = true;
-
     if (config_.nvmCachePaths.size() == 1) {
       // if we get a directory, create a file. we will clean it up. If we
       // already have a file, user provided it. We will also keep it around
       // after the tests.
       auto path = config_.nvmCachePaths[0];
-      if (cachelib::util::isDir(path)) {
+      bool isDir;
+      bool isBlk = false;
+      try {
+        isDir = cachelib::util::isDir(path);
+        if (!isDir) {
+          isBlk = cachelib::util::isBlk(path);
+        }
+      } catch (const std::system_error&) {
+        XLOGF(INFO, "nvmCachePath {} does not exist", path);
+        isDir = false;
+      }
+
+      if (isDir) {
         const auto uniqueSuffix = folly::sformat("nvmcache_{}_{}", ::getpid(),
                                                  folly::Random::rand32());
         path = path + "/" + uniqueSuffix;
         util::makeDir(path);
         nvmCacheFilePath_ = path;
+        XLOGF(INFO, "Configuring NVM cache: directory {} size {} MB", path,
+              config_.nvmCacheSizeMB);
         nvmConfig.navyConfig.setSimpleFile(path + "/navy_cache",
                                            config_.nvmCacheSizeMB * MB,
                                            true /*truncateFile*/);
       } else {
-        nvmConfig.navyConfig.setSimpleFile(path, config_.nvmCacheSizeMB * MB);
+        XLOGF(INFO, "Configuring NVM cache: simple file {} size {} MB", path,
+              config_.nvmCacheSizeMB);
+        nvmConfig.navyConfig.setSimpleFile(path, config_.nvmCacheSizeMB * MB,
+                                           !isBlk /* truncateFile */);
       }
     } else if (config_.nvmCachePaths.size() > 1) {
+      XLOGF(INFO, "Configuring NVM cache: RAID-0 ({} devices) size {} MB",
+            config_.nvmCachePaths.size(), config_.nvmCacheSizeMB);
       // set up a software raid-0 across each nvm cache path.
       nvmConfig.navyConfig.setRaidFiles(config_.nvmCachePaths,
                                         config_.nvmCacheSizeMB * MB);
     } else {
       // use memory to mock NVM.
+      XLOGF(INFO, "Configuring NVM cache: memory file size {} MB",
+            config_.nvmCacheSizeMB);
       nvmConfig.navyConfig.setMemoryFile(config_.nvmCacheSizeMB * MB);
     }
     nvmConfig.navyConfig.setDeviceMetadataSize(config_.nvmCacheMetadataSizeMB *
@@ -169,11 +190,13 @@ Cache<Allocator>::Cache(const CacheConfig& config,
           config_.navyReqOrderShardsPower);
     }
     nvmConfig.navyConfig.setBlockSize(config_.navyBlockSize);
+    nvmConfig.navyConfig.setEnableFDP(config_.deviceEnableFDP);
 
     // configure BlockCache
     auto& bcConfig = nvmConfig.navyConfig.blockCache()
                          .setDataChecksum(config_.navyDataChecksum)
-                         .setCleanRegions(config_.navyCleanRegions)
+                         .setCleanRegions(config_.navyCleanRegions,
+                                          config_.navyCleanRegionThreads)
                          .setRegionSize(config_.navyRegionSizeMB * MB);
 
     // by default lru. if more than one fifo ratio is present, we use
@@ -207,7 +230,17 @@ Cache<Allocator>::Cache(const CacheConfig& config,
     nvmConfig.navyConfig.setMaxParcelMemoryMB(config_.navyParcelMemoryMB);
 
     nvmConfig.navyConfig.setReaderAndWriterThreads(config_.navyReaderThreads,
-                                                   config_.navyWriterThreads);
+                                                   config_.navyWriterThreads,
+                                                   config_.navyMaxNumReads,
+                                                   config_.navyMaxNumWrites,
+                                                   config_.navyStackSizeKB);
+
+    // Set enableIoUring (and override qDepth) if async io is enabled
+    if (config_.navyMaxNumReads || config_.navyMaxNumWrites ||
+        config_.navyQDepth) {
+      nvmConfig.navyConfig.enableAsyncIo(config_.navyQDepth,
+                                         config_.navyEnableIoUring);
+    }
 
     if (config_.navyAdmissionWriteRateMB > 0) {
       nvmConfig.navyConfig.enableDynamicRandomAdmPolicy().setAdmWriteRate(
@@ -248,7 +281,7 @@ Cache<Allocator>::Cache(const CacheConfig& config,
     allocatorConfig_.setNvmAdmissionMinTTL(config_.memoryOnlyTTL);
   }
 
-  allocatorConfig_.cacheName = "cachebench";
+  allocatorConfig_.cacheName = kCachebenchCacheName;
 
   bool isRecovered = false;
   if (!allocatorConfig_.cacheDir.empty()) {
@@ -637,15 +670,36 @@ Stats Cache<Allocator>::getStats() const {
     aggregate += poolStats;
   }
 
+  std::map<PoolId, std::map<ClassId, ACStats>> allocationClassStats{};
+
+  for (size_t pid = 0; pid < pools_.size(); pid++) {
+    PoolId poolId = static_cast<PoolId>(pid);
+    auto poolStats = cache_->getPoolStats(poolId);
+    auto cids = poolStats.getClassIds();
+    for (auto [cid, stats] : poolStats.mpStats.acStats) {
+      allocationClassStats[poolId][cid] = stats;
+    }
+  }
+
   const auto cacheStats = cache_->getGlobalCacheStats();
   const auto rebalanceStats = cache_->getSlabReleaseStats();
   const auto navyStats = cache_->getNvmCacheStatsMap().toMap();
 
+  ret.allocationClassStats = allocationClassStats;
   ret.numEvictions = aggregate.numEvictions();
   ret.numItems = aggregate.numItems();
   ret.evictAttempts = cacheStats.evictionAttempts;
   ret.allocAttempts = cacheStats.allocAttempts;
   ret.allocFailures = cacheStats.allocFailures;
+
+  ret.backgndEvicStats.nEvictedItems = cacheStats.evictionStats.numMovedItems;
+  ret.backgndEvicStats.nTraversals = cacheStats.evictionStats.runCount;
+  ret.backgndEvicStats.nClasses = cacheStats.evictionStats.totalClasses;
+  ret.backgndEvicStats.evictionSize = cacheStats.evictionStats.totalBytesMoved;
+
+  ret.backgndPromoStats.nPromotedItems =
+      cacheStats.promotionStats.numMovedItems;
+  ret.backgndPromoStats.nTraversals = cacheStats.promotionStats.runCount;
 
   ret.numCacheGets = cacheStats.numCacheGets;
   ret.numCacheGetMiss = cacheStats.numCacheGetMiss;
@@ -693,6 +747,11 @@ Stats Cache<Allocator>::getStats() const {
   if (config_.printNvmCounters) {
     ret.nvmCounters = cache_->getNvmCacheStatsMap().toMap();
   }
+
+  ret.backgroundEvictionClasses =
+      cache_->getBackgroundMoverClassStats(MoverDir::Evict);
+  ret.backgroundPromotionClasses =
+      cache_->getBackgroundMoverClassStats(MoverDir::Promote);
 
   // nvm stats from navy
   if (!isRamOnly() && !navyStats.empty()) {

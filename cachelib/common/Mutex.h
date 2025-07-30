@@ -224,12 +224,14 @@ class PThreadSpinLock {
 // to template between using a RW mutex and a mutex
 struct RWMockLock {
   using Lock = folly::MicroSpinLock;
-  using ReadHolder = std::unique_lock<RWMockLock>;
-  using WriteHolder = std::unique_lock<RWMockLock>;
 
   void lock() { l_.lock(); }
-  void unlock() { l_.unlock(); }
   bool try_lock() { return l_.try_lock(); }
+  void unlock() { l_.unlock(); }
+
+  void lock_shared() { lock(); }
+  bool try_lock_shared() { return try_lock(); }
+  void unlock_shared() { unlock(); }
 
  private:
   Lock l_;
@@ -332,15 +334,13 @@ class BucketLocks : public BaseBucketLocks<LockType, LockAlignmentType> {
 };
 
 template <typename LockType,
-          typename ReadLockHolderType = typename LockType::ReadHolder,
-          typename WriteLockHolderType = typename LockType::WriteHolder,
           template <class> class LockAlignmentType = DefaultLockAlignment>
 class RWBucketLocks : public BaseBucketLocks<LockType, LockAlignmentType> {
  public:
   using Base = BaseBucketLocks<LockType, LockAlignmentType>;
   using Lock = LockType;
-  using ReadLockHolder = ReadLockHolderType;
-  using WriteLockHolder = WriteLockHolderType;
+  using ReadLockHolder = std::shared_lock<LockType>;
+  using WriteLockHolder = std::unique_lock<LockType>;
 
   RWBucketLocks(uint32_t locksPower, std::shared_ptr<Hash> hasher)
       : Base::BaseBucketLocks(locksPower, std::move(hasher)) {}
@@ -357,18 +357,29 @@ class RWBucketLocks : public BaseBucketLocks<LockType, LockAlignmentType> {
     return WriteLockHolder{Base::getLock(args...)};
   }
 
+  template <typename... Args>
+  WriteLockHolder tryLockExclusive(Args... args) noexcept {
+    return WriteLockHolder(Base::getLock(args...), std::try_to_lock);
+  }
+
   // try to grab the reader lock for a limit _timeout_ duration
   template <typename... Args>
   ReadLockHolder lockShared(const std::chrono::microseconds& timeout,
                             Args... args) {
-    return ReadLockHolder(Base::getLock(args...), timeout);
+    return //
+        timeout == std::chrono::microseconds::zero()
+            ? ReadLockHolder(Base::getLock(args...))
+            : ReadLockHolder(Base::getLock(args...), timeout);
   }
 
   // try to grab the writer lock for a limit _timeout_ duration
   template <typename... Args>
   WriteLockHolder lockExclusive(const std::chrono::microseconds& timeout,
                                 Args... args) {
-    return WriteLockHolder(Base::getLock(args...), timeout);
+    return //
+        timeout == std::chrono::microseconds::zero()
+            ? WriteLockHolder(Base::getLock(args...))
+            : WriteLockHolder(Base::getLock(args...), timeout);
   }
 };
 

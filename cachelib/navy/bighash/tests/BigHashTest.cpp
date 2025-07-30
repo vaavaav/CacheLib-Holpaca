@@ -36,10 +36,7 @@ using testing::NiceMock;
 using testing::Return;
 using testing::StrictMock;
 
-namespace facebook {
-namespace cachelib {
-namespace navy {
-namespace tests {
+namespace facebook::cachelib::navy::tests {
 namespace {
 void setLayout(BigHash::Config& config, uint32_t bs, uint32_t numBuckets) {
   config.bucketSize = bs;
@@ -216,7 +213,7 @@ TEST(BigHash, DeviceErrorStats) {
   BigHash bh(std::move(config));
 
   EXPECT_EQ(Status::Ok, bh.insert(makeHK("key1"), makeView("1")));
-  EXPECT_CALL(*device, writeImpl(0, 64, _)).WillOnce(Return(false));
+  EXPECT_CALL(*device, writeImpl(0, 64, _, _)).WillOnce(Return(false));
   EXPECT_EQ(Status::DeviceError, bh.insert(makeHK("key2"), makeView("1")));
   {
     MockCounterVisitor helper;
@@ -354,12 +351,13 @@ TEST(BigHash, WriteInTwoBuckets) {
       config.cacheBaseOffset + config.cacheSize, 128);
   {
     InSequence inSeq;
+    EXPECT_CALL(*device, allocatePlacementHandle());
     EXPECT_CALL(*device, readImpl(256, 128, _));
-    EXPECT_CALL(*device, writeImpl(256, 128, _));
+    EXPECT_CALL(*device, writeImpl(256, 128, _, _));
     EXPECT_CALL(*device, readImpl(384, 128, _));
-    EXPECT_CALL(*device, writeImpl(384, 128, _));
+    EXPECT_CALL(*device, writeImpl(384, 128, _, _));
     EXPECT_CALL(*device, readImpl(256, 128, _));
-    EXPECT_CALL(*device, writeImpl(256, 128, _));
+    EXPECT_CALL(*device, writeImpl(256, 128, _, _));
   }
   config.device = device.get();
 
@@ -378,10 +376,11 @@ TEST(BigHash, RemoveNotFound) {
   auto device = std::make_unique<StrictMock<MockDevice>>(config.cacheSize, 128);
   {
     InSequence inSeq;
+    EXPECT_CALL(*device, allocatePlacementHandle());
     EXPECT_CALL(*device, readImpl(0, 128, _));
-    EXPECT_CALL(*device, writeImpl(0, 128, _));
+    EXPECT_CALL(*device, writeImpl(0, 128, _, _));
     EXPECT_CALL(*device, readImpl(0, 128, _));
-    EXPECT_CALL(*device, writeImpl(0, 128, _));
+    EXPECT_CALL(*device, writeImpl(0, 128, _, _));
     EXPECT_CALL(*device, readImpl(0, 128, _));
   }
   config.device = device.get();
@@ -544,6 +543,7 @@ TEST(BigHash, BloomFilterRecoveryFail) {
   BigHash::Config config;
   setLayout(config, 128, 2);
   auto device = std::make_unique<StrictMock<MockDevice>>(config.cacheSize, 128);
+  EXPECT_CALL(*device, allocatePlacementHandle());
   EXPECT_CALL(*device, readImpl(_, _, _)).Times(0);
   config.device = device.get();
   config.bloomFilter = std::make_unique<BloomFilter>(2, 1, 4);
@@ -638,8 +638,9 @@ TEST(BigHash, BloomFilterRecovery) {
     setLayout(config, 128, 2);
     auto device =
         std::make_unique<StrictMock<MockDevice>>(config.cacheSize, 128);
+    EXPECT_CALL(*device, allocatePlacementHandle());
     EXPECT_CALL(*device, readImpl(0, 128, _));
-    EXPECT_CALL(*device, writeImpl(0, 128, _));
+    EXPECT_CALL(*device, writeImpl(0, 128, _, _));
     config.device = device.get();
     config.bloomFilter = std::make_unique<BloomFilter>(2, 1, 4);
 
@@ -698,8 +699,9 @@ TEST(BigHash, DestructorCallbackOutsideLock) {
   config.destructorCb = [&](HashedKey, BufferView, DestructorEvent event) {
     started = true;
     // only hangs the insertion not removal
-    while (!done && event == DestructorEvent::Recycled)
+    while (!done && event == DestructorEvent::Recycled) {
       ;
+    }
   };
 
   BigHash bh(std::move(config));
@@ -712,8 +714,9 @@ TEST(BigHash, DestructorCallbackOutsideLock) {
   });
 
   // wait until destrcutor started, which means bucket lock is released
-  while (!started)
+  while (!started) {
     ;
+  }
   // remove should not be blocked since bucket lock has been released
   EXPECT_EQ(Status::Ok, bh.remove(makeHK("key 1")));
 
@@ -762,7 +765,33 @@ TEST(BigHash, RandomAlloc) {
   EXPECT_GT(succ_cnt, (size_t)((double)loopCnt * 0.8));
   EXPECT_LT(stddev, avg * 0.2);
 }
-} // namespace tests
-} // namespace navy
-} // namespace cachelib
-} // namespace facebook
+
+// Make sure estimate write size always returns the bucket size.
+// Modify this test if we change the implementation.
+TEST(BigHash, EstimateWriteSize) {
+  {
+    uint32_t bucketSize = 2048;
+    BigHash::Config config;
+    setLayout(config, bucketSize, 4);
+    auto device = std::make_unique<NiceMock<MockDevice>>(config.cacheSize, 128);
+    config.device = device.get();
+
+    BigHash bh(std::move(config));
+    EXPECT_EQ(bh.estimateWriteSize(makeHK("key"), makeView("12345")),
+              bucketSize);
+    EXPECT_EQ(bh.estimateWriteSize(makeHK("key2"), makeView("1")), bucketSize);
+  }
+  {
+    uint32_t bucketSize = 8192;
+    BigHash::Config config;
+    setLayout(config, bucketSize, 4);
+    auto device = std::make_unique<NiceMock<MockDevice>>(config.cacheSize, 128);
+    config.device = device.get();
+
+    BigHash bh(std::move(config));
+    EXPECT_EQ(bh.estimateWriteSize(makeHK("key3"), makeView("12345")),
+              bucketSize);
+    EXPECT_EQ(bh.estimateWriteSize(makeHK("key4"), makeView("1")), bucketSize);
+  }
+}
+} // namespace facebook::cachelib::navy::tests

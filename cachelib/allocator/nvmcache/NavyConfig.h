@@ -16,7 +16,7 @@
 
 #pragma once
 
-#include <folly/dynamic.h>
+#include <folly/json/dynamic.h>
 #include <folly/logging/xlog.h>
 
 #include <stdexcept>
@@ -288,7 +288,8 @@ class BlockCacheConfig {
   // Navy needs to maintain sufficient buffers for each clean region that is
   // reserved. This ensures each time we obtain a new in-mem buffer, we have a
   // clean region to flush it to flash once it's ready.
-  BlockCacheConfig& setCleanRegions(uint32_t cleanRegions) noexcept;
+  BlockCacheConfig& setCleanRegions(uint32_t cleanRegions,
+                                    uint32_t cleanRegionThreads = 1);
 
   BlockCacheConfig& setRegionSize(uint32_t regionSize) noexcept {
     regionSize_ = regionSize;
@@ -318,6 +319,8 @@ class BlockCacheConfig {
 
   uint32_t getCleanRegions() const { return cleanRegions_; }
 
+  uint32_t getCleanRegionThreads() const { return cleanRegionThreads_; }
+
   uint32_t getNumInMemBuffers() const { return numInMemBuffers_; }
 
   uint32_t getRegionSize() const { return regionSize_; }
@@ -342,6 +345,10 @@ class BlockCacheConfig {
   BlockCacheReinsertionConfig reinsertionConfig_;
   // Buffer of clean regions to maintain for eviction.
   uint32_t cleanRegions_{1};
+  // Number of RegionManager threads to run reclaim and flush.
+  // We expect one thread is enough for most of use cases, but can be
+  // configured to more threads if needed
+  unsigned int cleanRegionThreads_{1};
   // Number of Navy BlockCache in-memory buffers.
   uint32_t numInMemBuffers_{2};
   // Size for a region for Navy BlockCache (must be multiple of
@@ -440,6 +447,21 @@ class EnginesConfig {
   BigHashConfig bigHashConfig_;
 };
 
+enum class IoEngine : uint8_t { IoUring, LibAio, Sync };
+
+inline const folly::StringPiece getIoEngineName(IoEngine e) {
+  switch (e) {
+  case IoEngine::IoUring:
+    return "io_uring";
+  case IoEngine::LibAio:
+    return "libaio";
+  case IoEngine::Sync:
+    return "sync";
+  }
+  XDCHECK(false);
+  return "invalid";
+}
+
 /**
  * NavyConfig provides APIs for users to set up Navy related settings for
  * NvmCache.
@@ -463,6 +485,8 @@ class NavyConfig {
   bool isBigHashEnabled() const {
     return enginesConfigs_[0].bigHash().getSizePct() > 0;
   }
+  bool isFDPEnabled() const { return enableFDP_; }
+
   std::map<std::string, std::string> serialize() const;
 
   // Getters:
@@ -479,12 +503,15 @@ class NavyConfig {
 
   // ============ Device settings =============
   uint64_t getBlockSize() const { return blockSize_; }
+  bool getExclusiveOwner() const { return isExclusiveOwner_; }
   const std::string& getFileName() const;
   const std::vector<std::string>& getRaidPaths() const;
   uint64_t getDeviceMetadataSize() const { return deviceMetadataSize_; }
   uint64_t getFileSize() const { return fileSize_; }
   bool getTruncateFile() const { return truncateFile_; }
   uint32_t getDeviceMaxWriteSize() const { return deviceMaxWriteSize_; }
+  IoEngine getIoEngine() const { return ioEngine_; }
+  unsigned int getQDepth() const { return qDepth_; }
 
   // Return a const BlockCacheConfig to read values of its parameters.
   const BigHashConfig& bigHash() const {
@@ -503,9 +530,13 @@ class NavyConfig {
   unsigned int getWriterThreads() const { return writerThreads_; }
   uint64_t getNavyReqOrderingShards() const { return navyReqOrderingShards_; }
 
+  unsigned int getMaxNumReads() const { return maxNumReads_; }
+  unsigned int getMaxNumWrites() const { return maxNumWrites_; }
+  unsigned int getStackSize() const { return stackSize_; }
   // ============ other settings =============
   uint32_t getMaxConcurrentInserts() const { return maxConcurrentInserts_; }
   uint64_t getMaxParcelMemoryMB() const { return maxParcelMemoryMB_; }
+  bool getUseEstimatedWriteSize() const { return useEstimatedWriteSize_; }
 
   // Setters:
   // Enable "dynamic_random" admission policy.
@@ -519,7 +550,15 @@ class NavyConfig {
   RandomAPConfig& enableRandomAdmPolicy();
 
   // ============ Device settings =============
+  // Set the device block size, i.e., minimum unit of IO
   void setBlockSize(uint64_t blockSize) noexcept { blockSize_ = blockSize; }
+  // Set the NVMe FDP Device data placement mode in the Cachelib
+  void setEnableFDP(bool enable) noexcept { enableFDP_ = enable; }
+  // If true, Navy will only start if it's the sole owner of the file.
+  // This only applies to non-memory-backed files.
+  void setExclusiveOwner(bool isExclusiveOwner) noexcept {
+    isExclusiveOwner_ = isExclusiveOwner;
+  }
   // Set the parameters for a simple file.
   // @throw std::invalid_argument if RAID files have been already set.
   void setSimpleFile(const std::string& fileName,
@@ -542,6 +581,12 @@ class NavyConfig {
     deviceMaxWriteSize_ = deviceMaxWriteSize;
   }
 
+  // Enable AsyncIo
+  // If enabled already via job config settings, this will override
+  // the qDepth_ or enableIoUring_.
+  // If qDepth is 0, existing qDepth_ will be used
+  void enableAsyncIo(unsigned int qDepth, bool enableIoUring);
+
   // ============ BlockCache settings =============
   // Return BlockCacheConfig for configuration.
   BlockCacheConfig& blockCache() noexcept {
@@ -560,11 +605,14 @@ class NavyConfig {
   }
 
   // ============ Job scheduler settings =============
+  // Set the number of reader threads and writer threads.
+  // If maxNumReads and maxNumWrites are all 0, sync IO will be used
   void setReaderAndWriterThreads(unsigned int readerThreads,
-                                 unsigned int writerThreads) noexcept {
-    readerThreads_ = readerThreads;
-    writerThreads_ = writerThreads;
-  }
+                                 unsigned int writerThreads,
+                                 unsigned int maxNumReads = 0,
+                                 unsigned int maxNumWrites = 0,
+                                 unsigned int stackSizeKB = 0);
+
   // Set Navy request ordering shards (expressed as power of two).
   // @throw std::invalid_argument if the input value is 0.
   void setNavyReqOrderingShards(uint64_t navyReqOrderingShards);
@@ -575,6 +623,9 @@ class NavyConfig {
   }
   void setMaxParcelMemoryMB(uint64_t maxParcelMemoryMB) noexcept {
     maxParcelMemoryMB_ = maxParcelMemoryMB;
+  }
+  void setUseEstimatedWriteSize(bool useEstimatedWriteSize) noexcept {
+    useEstimatedWriteSize_ = useEstimatedWriteSize;
   }
 
   const std::vector<EnginesConfig>& enginesConfigs() const {
@@ -594,6 +645,8 @@ class NavyConfig {
   // ============ Device settings =============
   // Navy specific device block size in bytes.
   uint64_t blockSize_{4096};
+  // If true, Navy will only start if it's the sole owner of the file.
+  bool isExclusiveOwner_{false};
   // The file name/path for caching.
   std::string fileName_;
   // An array of Navy RAID device file paths.
@@ -608,6 +661,13 @@ class NavyConfig {
   // This controls granularity of the writes when we flush the region.
   // This is only used when in-mem buffer is enabled.
   uint32_t deviceMaxWriteSize_{};
+
+  // IoEngine type used for IO
+  IoEngine ioEngine_{IoEngine::Sync};
+
+  // Number of queue depth per thread for async IO.
+  // 0 for Sync io engine and >1 for libaio and io_uring
+  unsigned int qDepth_{0};
 
   // ============ Engines settings =============
   // Currently we support one pair of engines.
@@ -625,6 +685,16 @@ class NavyConfig {
   // This value needs to be non-zero.
   uint64_t navyReqOrderingShards_{20};
 
+  // Max number of concurrent reads/writes in whole Navy.
+  // This needs to be a multiple of the number of readers and writers.
+  // Setting this to non-0 will enable async IO where fibers are used
+  // for Navy operations including device IO
+  unsigned int maxNumReads_{0};
+  unsigned int maxNumWrites_{0};
+
+  // Stack size of fibers when async-io is enabled. 0 for default
+  unsigned int stackSize_{0};
+
   // ============ Other settings =============
   // Maximum number of concurrent inserts we allow globally for Navy.
   // 0 means unlimited.
@@ -633,6 +703,12 @@ class NavyConfig {
   // Once this is reached, requests will be rejected until the parcel
   // memory usage gets under the limit.
   uint64_t maxParcelMemoryMB_{256};
+  // Whether to use write size (instead of parcel size) for Navy admission
+  // policy.
+  bool useEstimatedWriteSize_{false};
+  // Whether Navy support the NVMe FDP data placement(TP4146) directives or not.
+  // Reference: https://nvmexpress.org/nvmeflexible-data-placement-fdp-blog/
+  bool enableFDP_{false};
 };
 } // namespace navy
 } // namespace cachelib

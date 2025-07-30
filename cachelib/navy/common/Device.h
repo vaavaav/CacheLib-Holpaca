@@ -19,6 +19,7 @@
 #include <folly/File.h>
 #include <folly/io/IOBuf.h>
 
+#include "cachelib/allocator/nvmcache/NavyConfig.h"
 #include "cachelib/common/AtomicCounter.h"
 #include "cachelib/common/PercentileStats.h"
 #include "cachelib/navy/common/Buffer.h"
@@ -28,6 +29,7 @@
 namespace facebook {
 namespace cachelib {
 namespace navy {
+
 class DeviceEncryptor {
  public:
   virtual ~DeviceEncryptor() = default;
@@ -55,6 +57,19 @@ class DeviceEncryptor {
 //
 // Read/write returns true if @value written/read entirely (all @size bytes).
 // Pointer ownership is not passed.
+//
+// For the device supporting the data placement technology like FDP,
+// the write API takes the optional argument placeHandle which is used
+// to pass the hint for the placement of the data in the device.
+// E.g., in case of NVMe FDP, the SSD places the data to a different
+// erase unit (a.k.a. superblock) inside the SSD depending on the handle.
+// The expectation is that, if the host writes the data in sequential
+// overwrite manner (like the BlockCache with FIFO replacement),
+// the overwrites makes the whole superblock being invalidated inside
+// the SSD. As such, the SSD can reclaim the superblock simply by erasing
+// it without needs to copy any valid data (so called garbage collection)
+// to a different superblock.
+// (https://nvmexpress.org/nvmeflexible-data-placement-fdp-blog/)
 class Device {
  public:
   // @param size    total size of the device
@@ -67,19 +82,25 @@ class Device {
   Device(uint64_t size,
          std::shared_ptr<DeviceEncryptor> encryptor,
          uint32_t maxWriteSize)
-      : Device(
-            size, std::move(encryptor), kDefaultAlignmentSize, maxWriteSize) {}
+      : Device(size,
+               std::move(encryptor),
+               kDefaultAlignmentSize,
+               0 /* max device IO size */,
+               maxWriteSize) {}
 
   // @param size          total size of the device
   // @param encryptor     encryption object
   // @param ioAlignSize   alignment size for IO operations
+  // @param maxIOSize     max device IO size
   // @param maxWriteSize  max device write size
   Device(uint64_t size,
          std::shared_ptr<DeviceEncryptor> encryptor,
          uint32_t ioAlignSize,
+         uint32_t maxIOSize,
          uint32_t maxWriteSize)
       : size_(size),
         ioAlignmentSize_{ioAlignSize},
+        maxIOSize_(maxIOSize),
         maxWriteSize_(maxWriteSize),
         encryptor_{std::move(encryptor)} {
     if (ioAlignSize == 0) {
@@ -94,6 +115,11 @@ class Device {
     if (maxWriteSize_ % ioAlignmentSize_ != 0) {
       throw std::invalid_argument(folly::sformat(
           "Invalid max write size {} ioAlignSize {}", maxWriteSize_, size));
+    }
+    if (maxIOSize_ % ioAlignmentSize_ != 0) {
+      throw std::invalid_argument(
+          folly::sformat("Invalid max io size {} ioAlignSize {}", maxIOSize_,
+                         ioAlignmentSize_));
     }
   }
   virtual ~Device() = default;
@@ -114,11 +140,15 @@ class Device {
   // @param buffer    Data to write to the device. It must be aligned the same
   //                  way as `makeIOBuffer` would return.
   // @param offset    Must be ioAlignmentSize_ aligned
-  bool write(uint64_t offset, Buffer buffer);
+  // @param placeHandle    handle for data placement technology like FDP
+  bool write(uint64_t offset, Buffer buffer, int placeHandle = -1);
 
   // Write buffer view to the device. This call makes a copy of the buffer if
   // entryptor is present.
-  bool write(uint64_t offset, BufferView bufferView);
+  bool write(uint64_t offset, BufferView bufferView, int placeHandle = -1);
+
+  // Allocate a new stream and return the handle for Placement capable devices.
+  virtual int allocatePlacementHandle() = 0;
 
   // Reads @size bytes from device at @deviceOffset and copys to @value
   // There must be sufficient space allocated already in the mutableView.
@@ -153,7 +183,10 @@ class Device {
   uint32_t getIOAlignmentSize() const { return ioAlignmentSize_; }
 
  protected:
-  virtual bool writeImpl(uint64_t offset, uint32_t size, const void* value) = 0;
+  virtual bool writeImpl(uint64_t offset,
+                         uint32_t size,
+                         const void* value,
+                         int placeHandle = -1) = 0;
   virtual bool readImpl(uint64_t offset, uint32_t size, void* value) = 0;
   virtual void flushImpl() = 0;
 
@@ -170,7 +203,10 @@ class Device {
 
   bool readInternal(uint64_t offset, uint32_t size, void* value);
 
-  bool writeInternal(uint64_t offset, const uint8_t* data, size_t size);
+  bool writeInternal(uint64_t offset,
+                     const uint8_t* data,
+                     size_t size,
+                     int placeHandle = -1);
 
   // size of the device. All offsets for write/read should be contained
   // below this.
@@ -178,6 +214,10 @@ class Device {
 
   // alignment granularity for the offsets and size to read/write calls.
   const uint32_t ioAlignmentSize_{kDefaultAlignmentSize};
+
+  // Some devices have this transfer size limit due to DMA size limitations.
+  // This limit is applicable for both writes and reads.
+  const uint32_t maxIOSize_{0};
 
   // When write-io is issued, it is broken down into writeImpl calls at
   // this granularity. maxWriteSize_ 0 means no maximum write size.
@@ -191,19 +231,6 @@ class Device {
   static constexpr uint32_t kDefaultAlignmentSize{1};
 };
 
-std::unique_ptr<Device> createDirectIoFileDevice(
-    folly::File f,
-    uint64_t size,
-    uint32_t ioAlignSize,
-    std::shared_ptr<DeviceEncryptor> encryptor,
-    uint32_t maxDeviceWriteSize);
-std::unique_ptr<Device> createDirectIoRAID0Device(
-    std::vector<folly::File> fVec,
-    uint64_t size, // size of each device in the RAID
-    uint32_t ioAlignSize,
-    uint32_t stripeSize,
-    std::shared_ptr<DeviceEncryptor> encryptor,
-    uint32_t maxDeviceWriteSize);
 // Default ioAlignSize size for Memory Device is 1. In our tests, we create
 // Devices with different ioAlignSize sizes using memory device. So we need
 // a way to set a different ioAlignSize size for memory devices.
@@ -211,6 +238,77 @@ std::unique_ptr<Device> createMemoryDevice(
     uint64_t size,
     std::shared_ptr<DeviceEncryptor> encryptor,
     uint32_t ioAlignSize = 1);
+
+// Creates a direct IO file device supporting RAID if multiple files are
+// provided. If qDepth = 0, sync IO will be used all the time
+//
+// @param fVec                  vector of file descriptor(s)
+// @param filePaths             vector of file path(s)
+// @param fileSize              size of the file(s)
+// @param blockSize             device block size
+// @param stripeSize            RAID stripe size if applicable
+// @param maxDeviceWriteSize    device maximum granularity of writes
+// @param numIoThreads          the number of IO threads. If 0 and EventBase is
+//                              not available, IOs will be fall back to sync IO
+// @param ioEngine              IO engine to be used
+// @param qDepth                queue depth per each IO thread.
+//                              If 0, sync IO will be used
+// @param isFDPEnabled          Whether FDP placement mode is enabled or not.
+// @param encryptor             encryption object
+std::unique_ptr<Device> createDirectIoFileDevice(
+    std::vector<folly::File> fVec,
+    std::vector<std::string> filePaths,
+    uint64_t fileSize,
+    uint32_t blockSize,
+    uint32_t stripeSize,
+    uint32_t maxDeviceWriteSize,
+    IoEngine ioEngine,
+    uint32_t qDepth,
+    bool isFDPEnabled,
+    std::shared_ptr<DeviceEncryptor> encryptor);
+
+// A convenient wrapper for creating Device with a sync IO
+//
+// @param fVec                  vector of file descriptor(s)
+// @param fileSize              size of the file(s)
+// @param blockSize             device block size
+// @param stripeSize            RAID stripe size if applicable
+// @param maxDeviceWriteSize    device maximum granularity of writes
+// @param encryptor             encryption object
+std::unique_ptr<Device> createDirectIoFileDevice(
+    std::vector<folly::File> fVec,
+    uint64_t fileSize,
+    uint32_t blockSize,
+    uint32_t stripeSize,
+    uint32_t maxDeviceWriteSize,
+    std::shared_ptr<DeviceEncryptor> encryptor);
+
+// Creates a direct IO file device.
+// RAID0 with given stripe size is applied if multiple files are provided
+//
+// @param filePaths             name(s) of the file(s)
+// @param fileSize              size of the file(s)
+// @param truncateFile          whether to truncate the file
+// @param blockSize             device block size
+// @param stripeSize            RAID stripe size if applicable
+// @param maxDeviceWriteSize    device maximum granularity of writes
+// @param ioEngine              IoEngine to be used for IO
+// @param qDepth                queue depth for async IO; 0 for sync IO
+// @param isFDPEnabled          whether FDP placement mode enabled or not
+// @param encryptor             encryption object
+// @param isExclusiveOwner      fail if not sole owner of the file
+std::unique_ptr<Device> createFileDevice(
+    std::vector<std::string> filePaths,
+    uint64_t fileSize,
+    bool truncateFile,
+    uint32_t blockSize,
+    uint32_t stripeSize,
+    uint32_t maxDeviceWriteSize,
+    IoEngine ioEngine,
+    uint32_t qDepth,
+    bool isFDPEnabled,
+    std::shared_ptr<navy::DeviceEncryptor> encryptor,
+    bool isExclusiveOwner);
 } // namespace navy
 } // namespace cachelib
 } // namespace facebook

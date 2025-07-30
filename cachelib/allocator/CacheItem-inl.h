@@ -253,11 +253,6 @@ bool CacheItem<CacheTrait>::isMoving() const noexcept {
 }
 
 template <typename CacheTrait>
-bool CacheItem<CacheTrait>::isOnlyMoving() const noexcept {
-  return ref_.isOnlyMoving();
-}
-
-template <typename CacheTrait>
 void CacheItem<CacheTrait>::markNvmClean() noexcept {
   ref_.markNvmClean();
 }
@@ -363,8 +358,11 @@ bool CacheItem<CacheTrait>::updateExpiryTime(uint32_t expiryTimeSecs) noexcept {
   // attempt to atomically update the value of expiryTime
   while (true) {
     uint32_t currExpTime = expiryTime_;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Waddress-of-packed-member"
     if (__sync_bool_compare_and_swap(&expiryTime_, currExpTime,
                                      expiryTimeSecs)) {
+#pragma clang diagnostic pop
       return true;
     }
   }

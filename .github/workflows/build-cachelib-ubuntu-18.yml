@@ -18,10 +18,7 @@
 # Instead, use "ubuntu-latest" and run Ubuntu-18.04 inside a docker container.
 name: build-cachelib-ubuntu-18
 on:
-#  push:
-  pull_request:
-  schedule:
-    - cron:  '0 5 * * 2,4,6'
+  workflow_dispatch:
 jobs:
   build-cachelib-ubuntu-18:
     name: "Ubuntu-18 - Build CacheLib with all dependencies"
@@ -38,6 +35,7 @@ jobs:
           apt-get install -y software-properties-common
           #apt-add-repository "deb http://security.ubuntu.com/ubuntu bionic-security main universe restricted"
           apt-get upgrade -y
+          add-apt-repository ppa:git-core/ppa -y
           apt-get install -y openssl
           apt-get install -y sudo git procps wget curl
           apt-get install -y build-essential
@@ -49,6 +47,13 @@ jobs:
           apt-get update
           apt-get install -y kitware-archive-keyring
           apt-get install -y cmake
+      - name: "update gcc"
+        run: |
+          add-apt-repository ppa:ubuntu-toolchain-r/test -y
+          apt-get update
+          apt-get install -y gcc-11 g++-11
+          update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-7 70 --slave /usr/bin/g++ g++ /usr/bin/g++-7 --slave /usr/bin/gcov gcov /usr/bin/gcov-7 --slave /usr/bin/gcc-ar gcc-ar /usr/bin/gcc-ar-7 --slave /usr/bin/gcc-ranlib gcc-ranlib /usr/bin/gcc-ranlib-7
+          update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 110 --slave /usr/bin/g++ g++ /usr/bin/g++-11 --slave /usr/bin/gcov gcov /usr/bin/gcov-11 --slave /usr/bin/gcc-ar gcc-ar /usr/bin/gcc-ar-11 --slave /usr/bin/gcc-ranlib gcc-ranlib /usr/bin/gcc-ranlib-11
       - name: "System Information"
         run: |
           echo === uname ===
@@ -69,10 +74,10 @@ jobs:
           cc -v
           echo === g++ -v ===
           g++ -v
-      - name: "git: ignore unsafe-directories"
-        run: git config --global --add safe.directory '*'
       - name: "checkout sources"
-        uses: actions/checkout@v1
+        uses: actions/checkout@v3
+      - name: "Add workspace as a safe directory"
+        run: git config --system --add safe.directory $GITHUB_WORKSPACE
       - name: "Install Prerequisites"
         run: ./contrib/build.sh -S -B
       - name: "Test: update-submodules"
@@ -95,12 +100,16 @@ jobs:
         run: ./contrib/build-package.sh -j -v -i fizz
       - name: "Install dependency: wangle"
         run: ./contrib/build-package.sh -j -v -i wangle
+      - name: "Install dependency: mvfst"
+        run: ./contrib/build-package.sh -j -v -i mvfst
       - name: "Install dependency: fbthrift"
         run: ./contrib/build-package.sh -j -v -i fbthrift
       - name: "build CacheLib"
-        # Build cachelib in debug mode (-d) and with all tests (-t)
-        run: ./contrib/build-package.sh -j -v -i -t cachelib
-      - uses: actions/upload-artifact@v2
+        # Build cachelib in debug mode (-d)
+        run: ./contrib/build-package.sh -j -v -i cachelib
+      - name: "run cachebench"
+        run: ./opt/cachelib/bin/cachebench --json_test_config ./opt/cachelib/test_configs/simple_test.json
+      - uses: actions/upload-artifact@v3
         if: failure()
         with:
           name: cachelib-cmake-logs

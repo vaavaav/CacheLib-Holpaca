@@ -111,9 +111,11 @@ find_package(wangle CONFIG REQUIRED)
 find_package(Zlib REQUIRED)
 find_package(Zstd REQUIRED)
 find_package(FBThrift REQUIRED) # must come after wangle
-find_package(Shards CONFIG REQUIRED)
-find_package(Protobuf CONFIG REQUIRED)
-find_package(gRPC CONFIG REQUIRED)
+
+find_package(uring)
+if (NOT uring_FOUND)
+  add_definitions(-DCACHELIB_IOURING_DISABLE)
+endif()
 
 # FBThrift - generates h/cpp files from .*thrift files
 find_program(FBTHRIFT1 thrift1 DOC "Facebook's fork of apache thrift")
@@ -235,11 +237,26 @@ function(add_thrift_file PREFIX THRIFT_RELATIVE_PATH CPP_OPTION)
   message(STATUS "thrift files: ${${PREFIX}_THRIFT_FILES}")
 
   add_custom_command(
-    OUTPUT ${${PREFIX}_THRIFT_FILES}
-    COMMAND ${FBTHRIFT1} -o ${FOOM} --gen mstch_cpp2:${CPP_OPTION} -I
-            ${CACHELIB_HOME}/.. ${THRIFT_BASENAME}
-    DEPENDS ${THRIFT_RELATIVE_PATH}
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/${THRIFT_REL_DIR})
+    OUTPUT
+       ${${PREFIX}_THRIFT_FILES}
+    COMMAND
+       ${FBTHRIFT1} -o ${FOOM} --gen mstch_cpp2:${CPP_OPTION}
+                    -I "${FBTHRIFT_INCLUDE_DIR}" -I ${CACHELIB_HOME}/..
+                    ${THRIFT_BASENAME}
+    DEPENDS
+       ${THRIFT_RELATIVE_PATH}
+   WORKING_DIRECTORY
+       ${CMAKE_CURRENT_SOURCE_DIR}/${THRIFT_REL_DIR}
+   )
+
+ add_custom_target(${PREFIX}_thrift_target
+   DEPENDS ${${PREFIX}_THRIFT_FILES})
+
+ add_dependencies(thrift_generated_files ${PREFIX}_thrift_target)
+
+ # HACK ALERT: transfer the list of files to the parent's (caller's) scope
+ set(${PREFIX}_THRIFT_FILES "${${PREFIX}_THRIFT_FILES}" PARENT_SCOPE)
+endfunction()
 
   add_custom_target(${PREFIX}_thrift_target DEPENDS ${${PREFIX}_THRIFT_FILES})
 

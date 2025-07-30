@@ -18,8 +18,7 @@
 
 #include <folly/logging/xlog.h>
 
-namespace facebook {
-namespace cachelib {
+namespace facebook::cachelib {
 
 CCacheAllocator::CCacheAllocator(MemoryAllocator& allocator, PoolId poolId)
     : allocator_(allocator), poolId_(poolId), currentChunksIndex_(0) {
@@ -36,7 +35,9 @@ CCacheAllocator::CCacheAllocator(MemoryAllocator& allocator,
       currentChunksIndex_(0) {
   auto& currentChunks = chunks_[currentChunksIndex_];
   for (auto chunk : *object.chunks()) {
-    currentChunks.push_back(allocator_.unCompress(CompressedPtr(chunk)));
+    // TODO : pass multi-tier flag when compact cache supports multi-tier config
+    currentChunks.push_back(
+        allocator_.unCompress(CompressedPtr(chunk), false /* isMultiTier */));
   }
 }
 
@@ -97,7 +98,9 @@ CCacheAllocator::SerializationType CCacheAllocator::saveState() {
 
   std::lock_guard<std::mutex> guard(resizeLock_);
   for (auto chunk : getCurrentChunks()) {
-    object.chunks()->push_back(allocator_.compress(chunk).saveState());
+    // TODO : pass multi-tier flag when compact cache supports multi-tier config
+    object.chunks()->push_back(
+        allocator_.compress(chunk, false /* isMultiTier */).saveState());
   }
   return object;
 }
@@ -117,5 +120,4 @@ void CCacheAllocator::release(void* chunk) {
   allocator_.completeSlabRelease(context);
 }
 
-} // namespace cachelib
-} // namespace facebook
+} // namespace facebook::cachelib

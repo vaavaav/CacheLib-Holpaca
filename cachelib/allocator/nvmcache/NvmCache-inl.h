@@ -150,8 +150,8 @@ typename NvmCache<C>::WriteHandle NvmCache<C>::find(HashedKey hk) {
     // For concurrent put, if it is already enqueued, its put context already
     // exists. If it is not enqueued yet (in-flight) the above invalidateToken
     // will prevent the put from being enqueued.
-    if (config_.enableFastNegativeLookups && it == fillMap.end() &&
-        !putContexts_[shard].hasContexts() && !navyCache_->couldExist(hk)) {
+    if (it == fillMap.end() && !putContexts_[shard].hasContexts() &&
+        !navyCache_->couldExist(hk)) {
       stats().numNvmGetMiss.inc();
       stats().numNvmGetMissFast.inc();
       return WriteHandle{};
@@ -234,8 +234,8 @@ bool NvmCache<C>::couldExistFast(HashedKey hk) {
   // For concurrent put, if it is already enqueued, its put context already
   // exists. If it is not enqueued yet (in-flight) the above invalidateToken
   // will prevent the put from being enqueued.
-  if (config_.enableFastNegativeLookups && it == fillMap.end() &&
-      !putContexts_[shard].hasContexts() && !navyCache_->couldExist(hk)) {
+  if (it == fillMap.end() && !putContexts_[shard].hasContexts() &&
+      !navyCache_->couldExist(hk)) {
     return false;
   }
 
@@ -248,7 +248,7 @@ typename NvmCache<C>::WriteHandle NvmCache<C>::peek(folly::StringPiece key) {
     return nullptr;
   }
 
-  folly::Baton b;
+  folly::fibers::Baton b;
   WriteHandle hdl{};
   hdl.markWentToNvm();
 
@@ -314,7 +314,10 @@ void NvmCache<C>::evictCB(HashedKey hk,
     auto lock = getItemDestructorLock(hk);
     WriteHandle hdl;
     try {
-      hdl = WriteHandle{cache_.peek(hk.key())};
+      // FindInternal returns us the item in DRAM cache as long as this
+      // item can be found via DRAM cache's Access Container.
+      hdl =
+          WriteHandle{CacheAPIWrapperForNvm<C>::findInternal(cache_, hk.key())};
     } catch (const exception::RefcountOverflow& ex) {
       // TODO(zixuan) item exists in DRAM, but we can't obtain the handle
       // and mark it as NvmEvicted. In this scenario, there are two
@@ -427,13 +430,14 @@ NvmCache<C>::NvmCache(C& c,
                       const ItemDestructor& itemDestructor)
     : config_(config.validateAndSetDefaults()),
       cache_(c),
+      checkExpired_([](navy::BufferView v) -> bool {
+        const auto& nvmItem = *reinterpret_cast<const NvmItem*>(v.data());
+        return nvmItem.isExpired();
+      }),
       itemDestructor_(itemDestructor) {
   navyCache_ = createNavyCache(
       config_.navyConfig,
-      [](navy::BufferView v) -> bool {
-        const auto& nvmItem = *reinterpret_cast<const NvmItem*>(v.data());
-        return nvmItem.isExpired();
-      },
+      checkExpired_,
       [this](HashedKey hk, navy::BufferView v, navy::DestructorEvent e) {
         this->evictCB(hk, v, e);
       },
@@ -460,19 +464,18 @@ uint32_t NvmCache<C>::getStorageSizeInNvm(const Item& it) {
 }
 
 template <typename C>
-std::unique_ptr<NvmItem> NvmCache<C>::makeNvmItem(const WriteHandle& hdl) {
-  const auto& item = *hdl;
+std::unique_ptr<NvmItem> NvmCache<C>::makeNvmItem(const Item& item) {
   auto poolId = cache_.getAllocInfo((void*)(&item)).poolId;
 
   if (item.isChainedItem()) {
     throw std::invalid_argument(folly::sformat(
-        "Chained item can not be flushed separately {}", hdl->toString()));
+        "Chained item can not be flushed separately {}", item.toString()));
   }
 
   auto chainedItemRange =
-      CacheAPIWrapperForNvm<C>::viewAsChainedAllocsRange(cache_, *hdl);
+      CacheAPIWrapperForNvm<C>::viewAsChainedAllocsRange(cache_, item);
   if (config_.encodeCb && !config_.encodeCb(EncodeDecodeContext{
-                              *(hdl.getInternal()), chainedItemRange})) {
+                              const_cast<Item&>(item), chainedItemRange})) {
     return nullptr;
   }
 
@@ -496,12 +499,10 @@ std::unique_ptr<NvmItem> NvmCache<C>::makeNvmItem(const WriteHandle& hdl) {
 }
 
 template <typename C>
-void NvmCache<C>::put(WriteHandle& hdl, PutToken token) {
+void NvmCache<C>::put(Item& item, PutToken token) {
   util::LatencyTracker tracker(stats().nvmInsertLatency_);
-  HashedKey hk{hdl->getKey()};
+  HashedKey hk{item.getKey()};
 
-  XDCHECK(hdl);
-  auto& item = *hdl;
   // for regular items that can only write to nvmcache upon eviction, we
   // should not be recording a write for an nvmclean item unless it is marked
   // as evicted from nvmcache.
@@ -526,7 +527,7 @@ void NvmCache<C>::put(WriteHandle& hdl, PutToken token) {
     return;
   }
 
-  auto nvmItem = makeNvmItem(hdl);
+  auto nvmItem = makeNvmItem(item);
   if (!nvmItem) {
     stats().numNvmPutEncodeFailure.inc();
     return;
@@ -813,8 +814,7 @@ void NvmCache<C>::remove(HashedKey hk, DeleteTombStoneGuard tombstone) {
   // (in-flight puts) before we check for couldExist.  Any put contexts
   // created after couldExist api returns does not matter, since the put
   // token is invalidated before all of this begins.
-  if (config_.enableFastNegativeLookups && !putContexts_[shard].hasContexts() &&
-      !navyCache_->couldExist(hk)) {
+  if (!putContexts_[shard].hasContexts() && !navyCache_->couldExist(hk)) {
     stats().numNvmSkippedDeletes.inc();
     return;
   }
@@ -850,7 +850,7 @@ template <typename C>
 typename NvmCache<C>::SampleItem NvmCache<C>::getSampleItem() {
   navy::Buffer value;
   auto [status, keyStr] = navyCache_->getRandomAlloc(value);
-  if (status != navy::Status::Ok) {
+  if (status != navy::Status::Ok || checkExpired_(value.view())) {
     return SampleItem{true /* fromNvm */};
   }
 
@@ -924,7 +924,7 @@ template <typename C>
 uint64_t NvmCache<C>::getNvmItemRemovedSize() const {
   uint64_t size = 0;
   for (size_t i = 0; i < kShards; ++i) {
-    auto lock = std::unique_lock<std::mutex>{itemDestructorMutex_[i]};
+    auto lock = std::unique_lock<TimedMutex>{itemDestructorMutex_[i]};
     size += itemRemoved_[i].size();
   }
   return size;

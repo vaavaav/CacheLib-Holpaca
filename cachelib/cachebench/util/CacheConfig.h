@@ -192,9 +192,25 @@ struct CacheConfig : public JSONConfig {
   // number of asynchronous worker thread for navy write operation,
   uint32_t navyWriterThreads{32};
 
+  // Max number of concurrent reads/writes in whole Navy
+  uint32_t navyMaxNumReads{0};
+  uint32_t navyMaxNumWrites{0};
+
+  // Default stack size of Navy fibers when async IO is enabled
+  uint32_t navyStackSizeKB{16};
+
+  // qdepth to be used; override if already set automatically
+  // by navyMaxNumReads and navyMaxNumWrites
+  uint32_t navyQDepth{0};
+  // Use either io_uring or libaio for async IO
+  bool navyEnableIoUring{true};
+
   // buffer of clean regions to be maintained free to ensure writes
   // into navy don't queue behind a reclaim of region.
   uint32_t navyCleanRegions{1};
+
+  // The number of RegionManager threads for reclaim and flush
+  uint32_t navyCleanRegionThreads{1};
 
   // disabled when value is 0
   uint32_t navyAdmissionWriteRateMB{0};
@@ -219,12 +235,18 @@ struct CacheConfig : public JSONConfig {
   // Navy will split it into multiple IOs.
   uint32_t deviceMaxWriteSize{1024 * 1024};
 
+  // Enable the FDP Data placement mode in the device, if it is capable.
+  bool deviceEnableFDP{false};
+
   // Don't write to flash if cache TTL is smaller than this value.
   // Not used when its value is 0.  In seconds.
   uint32_t memoryOnlyTTL{0};
 
   // Use Posix Shm instead of SysVShm
   bool usePosixShm{false};
+
+  // Lock memory in the RAM
+  bool lockMemory{false};
 
   // Memory tiers configs
   std::vector<MemoryTierCacheConfig> memoryTierConfigs{};

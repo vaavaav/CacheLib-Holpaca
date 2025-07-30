@@ -22,8 +22,10 @@
 #include <vector>
 
 #include "cachelib/allocator/nvmcache/NavyConfig.h"
+#include "cachelib/common/ConditionVariable.h"
 #include "cachelib/common/Hash.h"
 #include "cachelib/common/Utils.h"
+#include "cachelib/common/inject_pause.h"
 #include "cachelib/navy/block_cache/BlockCache.h"
 #include "cachelib/navy/block_cache/HitsReinsertionPolicy.h"
 #include "cachelib/navy/block_cache/tests/TestHelpers.h"
@@ -42,10 +44,7 @@ using testing::Invoke;
 using testing::NiceMock;
 using testing::Return;
 
-namespace facebook {
-namespace cachelib {
-namespace navy {
-namespace tests {
+namespace facebook::cachelib::navy::tests {
 namespace {
 constexpr uint64_t kDeviceSize{64 * 1024};
 constexpr uint64_t kRegionSize{16 * 1024};
@@ -88,8 +87,8 @@ std::unique_ptr<Driver> makeDriver(std::unique_ptr<Engine> largeItemCache,
                                    std::unique_ptr<Device> device = nullptr,
                                    size_t metadataSize = 0) {
   Driver::Config config;
-  config.enginePairs.push_back(
-      {nullptr, std::move(largeItemCache), 0, scheduler.get()});
+  config.enginePairs.emplace_back(nullptr, std::move(largeItemCache), 0,
+                                  scheduler.get());
   config.scheduler = std::move(scheduler);
   config.metadataSize = metadataSize;
   config.device = std::move(device);
@@ -528,6 +527,8 @@ TEST(BlockCache, HoleStats) {
   EXPECT_EQ(Status::Ok, driver->remove(log[33].key()));
   EXPECT_EQ(Status::Ok, driver->remove(log[34].key()));
 
+  // Drain all async removes
+  driver->drain();
   driver->getCounters({[](folly::StringPiece name, double count) {
     if (name == "navy_bc_hole_count") {
       EXPECT_EQ(5, count);
@@ -543,13 +544,13 @@ TEST(BlockCache, HoleStats) {
   EXPECT_EQ(Status::Ok, driver->lookup(log[4].key(), val));
 
   // Force reclamation on region 0. There are 4 regions and the device
-  // was configured to require 1 clean region at all times
-  for (size_t i = 0; i < 16; i++) {
+  // was configured to require 1 clean region at all times.
+  {
     CacheEntry e{bg.gen(8), bg.gen(800)};
     EXPECT_EQ(Status::Ok, driver->insertAsync(e.key(), e.value(), nullptr));
     log.push_back(std::move(e));
   }
-  driver->flush();
+  driver->drain();
 
   // Reclaiming region 0 should have bumped down the hole count to
   // 2 remaining (from region 2)
@@ -561,6 +562,10 @@ TEST(BlockCache, HoleStats) {
     }
     if (name == "navy_bc_hole_count") {
       EXPECT_EQ(2, count);
+    }
+    // Initial 4 reclaims and 1 reclaim for region 0
+    if (name == "navy_bc_reclaim") {
+      EXPECT_EQ(5, count);
     }
     if (name == "navy_bc_hole_bytes") {
       EXPECT_EQ(2 * 1024, count);
@@ -587,14 +592,14 @@ TEST(BlockCache, ReclaimCorruption) {
   auto driver = makeDriver(std::move(engine), std::move(ex));
 
   // Allow any number of writes in between and after our expected writes
-  EXPECT_CALL(*device, writeImpl(_, _, _)).Times(testing::AtLeast(0));
+  EXPECT_CALL(*device, writeImpl(_, _, _, _)).Times(testing::AtLeast(0));
 
   // Note even tho this item's value is corrupted, we would have aborted
   // the reclaim before we got here. So we will not bump the value checksum
   // error stat on this.
-  EXPECT_CALL(*device, writeImpl(0, 16384, _))
+  EXPECT_CALL(*device, writeImpl(0, 16384, _, _))
       .WillOnce(testing::Invoke(
-          [&device](uint64_t offset, uint32_t size, const void* data) {
+          [&device](uint64_t offset, uint32_t size, const void* data, int) {
             // Note that all items are aligned to 512 bytes in in-mem buffer
             // stacked mode, and we write around 800 bytes, so each is aligned
             // to 1024 bytes
@@ -698,7 +703,7 @@ TEST(BlockCache, RegionUnderflow) {
   std::vector<uint32_t> hits(4);
   auto policy = std::make_unique<NiceMock<MockPolicy>>(&hits);
   auto device = std::make_unique<NiceMock<MockDevice>>(kDeviceSize, 1024);
-  EXPECT_CALL(*device, writeImpl(0, 16 * 1024, _));
+  EXPECT_CALL(*device, writeImpl(0, 16 * 1024, _, _));
   // Although 2k read buffer, shouldn't underflow the region!
   EXPECT_CALL(*device, readImpl(0, 1024, _));
   auto ex = makeJobScheduler();
@@ -725,7 +730,7 @@ TEST(BlockCache, SmallReadBuffer) {
   auto policy = std::make_unique<NiceMock<MockPolicy>>(&hits);
   auto device = std::make_unique<NiceMock<MockDevice>>(
       kDeviceSize, 4096 /* io alignment size */);
-  EXPECT_CALL(*device, writeImpl(0, 16 * 1024, _));
+  EXPECT_CALL(*device, writeImpl(0, 16 * 1024, _, _));
   EXPECT_CALL(*device, readImpl(0, 8192, _));
   auto ex = makeJobScheduler();
   auto config = makeConfig(*ex, std::move(policy), *device);
@@ -935,6 +940,7 @@ TEST(BlockCache, ReadRegionDuringEviction) {
   EXPECT_CALL(*device, readImpl(0, 16 * 1024, _));
   // Lookup log[2]
   EXPECT_CALL(*device, readImpl(8192, 4096, _)).Times(2);
+  // Lookup log[1]
   EXPECT_CALL(*device, readImpl(4096, 4096, _))
       .WillOnce(Invoke([md = device.get(), &sp](uint64_t offset, uint32_t size,
                                                 void* buffer) {
@@ -962,6 +968,7 @@ TEST(BlockCache, ReadRegionDuringEviction) {
                           });
       log.push_back(std::move(e));
       finishAllJobs(*exPtr);
+      driver->drain();
     }
   }
   driver->flush();
@@ -978,6 +985,11 @@ TEST(BlockCache, ReadRegionDuringEviction) {
 
   sp.wait(0);
 
+  ENABLE_INJECT_PAUSE_IN_SCOPE();
+
+  injectPauseSet("pause_reclaim_begin");
+  injectPauseSet("pause_reclaim_done");
+
   // Send insert. Will schedule a reclamation job. We will also track
   // the third region as it had been filled up. We will also expect
   // to evict the first region eventually for the reclaim.
@@ -990,14 +1002,19 @@ TEST(BlockCache, ReadRegionDuringEviction) {
   // and retries.
   EXPECT_TRUE(exPtr->runFirstIf("insert"));
 
-  Buffer value;
+  // The reclaim should have been started
+  EXPECT_TRUE(injectPauseWait("pause_reclaim_begin", 1 /* numThreads */,
+                              false /* wakeup */));
 
+  Buffer value;
   EXPECT_EQ(Status::Ok, driver->lookup(log[2].key(), value));
   EXPECT_EQ(log[2].value(), value.view());
 
-  // Eviction blocks access but reclaim will fail as there is still a reader
-  // outstanding
-  EXPECT_FALSE(exPtr->runFirstIf("reclaim"));
+  // Now, let the eviction thread goes; this would block access to the region
+  // but reclaim cannot be done as there is still an active reader outstanding.
+  injectPauseClear("pause_reclaim_begin");
+  // Wait for 5s to confirm the reclaim has not been done
+  EXPECT_FALSE(injectPauseWait("pause_reclaim_done", 1, false, 5000));
 
   std::thread lookupThread2([&driver, &log] {
     Buffer value2;
@@ -1009,13 +1026,17 @@ TEST(BlockCache, ReadRegionDuringEviction) {
   // evicted from the index, remove it manually and expect it was found.
   EXPECT_EQ(Status::Ok, driver->remove(log[2].key()));
 
-  // Reclaim still fails as the last reader is still outstanding
-  EXPECT_FALSE(exPtr->runFirstIf("reclaim"));
+  // Reclaim still fails as the last reader is still outstanding; wait for 5s
+  EXPECT_FALSE(injectPauseWait("pause_reclaim_done", 1, false, 5000));
 
   // Finish read and let evict region 0 entries
   sp.reached(1);
 
+  // Reclaim should have been completed now
+  EXPECT_TRUE(injectPauseWait("pause_reclaim_done", 1, true, 5000));
+
   finishAllJobs(*exPtr);
+  driver->drain();
   EXPECT_EQ(Status::NotFound, driver->remove(log[1].key()));
   EXPECT_EQ(Status::NotFound, driver->remove(log[2].key()));
 
@@ -1036,10 +1057,11 @@ TEST(BlockCache, DeviceFailure) {
   auto device = std::make_unique<NiceMock<MockDevice>>(kDeviceSize, 1024);
   {
     testing::InSequence seq;
-    EXPECT_CALL(*device, writeImpl(0, kRegionSize, _)).WillOnce(Return(false));
-    EXPECT_CALL(*device, writeImpl(0, kRegionSize, _));
-    EXPECT_CALL(*device, writeImpl(kRegionSize, kRegionSize, _));
-    EXPECT_CALL(*device, writeImpl(kRegionSize * 2, kRegionSize, _));
+    EXPECT_CALL(*device, writeImpl(0, kRegionSize, _, _))
+        .WillOnce(Return(false));
+    EXPECT_CALL(*device, writeImpl(0, kRegionSize, _, _));
+    EXPECT_CALL(*device, writeImpl(kRegionSize, kRegionSize, _, _));
+    EXPECT_CALL(*device, writeImpl(kRegionSize * 2, kRegionSize, _, _));
 
     EXPECT_CALL(*device, readImpl(0, 1024, _));
     EXPECT_CALL(*device, readImpl(kRegionSize, 1024, _))
@@ -1095,7 +1117,7 @@ namespace {
 std::unique_ptr<Device> setupResetTestDevice(uint32_t size) {
   auto device = std::make_unique<NiceMock<MockDevice>>(size, 512);
   for (uint32_t i = 0; i < 2; i++) {
-    EXPECT_CALL(*device, writeImpl(i * 16 * 1024, 16 * 1024, _));
+    EXPECT_CALL(*device, writeImpl(i * 16 * 1024, 16 * 1024, _, _));
   }
   return device;
 }
@@ -1193,10 +1215,17 @@ TEST(BlockCache, DestructorCallback) {
   auto driver = makeDriver(std::move(engine), std::move(ex));
 
   mockRegionsEvicted(mp, {0, 1, 2, 3, 1});
+
+  ENABLE_INJECT_PAUSE_IN_SCOPE();
+
+  // Pause at eviction done
+  injectPauseSet("pause_do_eviction_done");
+
   for (size_t i = 0; i < 7; i++) {
     EXPECT_EQ(Status::Ok, driver->insert(log[i].key(), log[i].value()));
   }
   EXPECT_EQ(Status::Ok, driver->remove(log[2].key()));
+  // Next insertion should start the eviction
   EXPECT_EQ(Status::Ok, driver->insert(log[7].key(), log[7].value()));
   EXPECT_EQ(Status::Ok, driver->insert(log[8].key(), log[8].value()));
 
@@ -1212,6 +1241,9 @@ TEST(BlockCache, DestructorCallback) {
   EXPECT_EQ(Status::NotFound, driver->lookup(log[2].key(), value));
   EXPECT_EQ(Status::Ok, driver->lookup(log[3].key(), value));
   EXPECT_EQ(log[6].value(), value.view());
+
+  // Make sure that the eviction for the region 1 is completed
+  EXPECT_TRUE(injectPauseWait("pause_do_eviction_done"));
   EXPECT_EQ(Status::NotFound, driver->lookup(log[4].key(), value));
 
   EXPECT_EQ(Status::Ok, driver->lookup(log[7].key(), value));
@@ -1790,6 +1822,41 @@ TEST(BlockCache, HitsReinsertionPolicy) {
   auto engine = makeEngine(std::move(config));
   auto driver = makeDriver(std::move(engine), std::move(ex));
 
+  folly::fibers::TimedMutex mutex;
+  bool reclaimStarted = false;
+  size_t numCleanRegions = 0;
+  util::ConditionVariable cv;
+
+  ENABLE_INJECT_PAUSE_IN_SCOPE();
+
+  // In this test case, it is important to prevent the reinsertions are
+  // not skipped due to allocation failures. To do so, we need to
+  // guarantee that the insertions (from this test case) do not race
+  // for the free space in the region against the reinsertions for reclaim.
+  // This can be achieved by making sure that the insertion proceeds with the
+  // allocation only if there is no outstanding reclaim; i.e., there should be
+  // at least one clean region reserved for the reclaim
+  injectPauseSet("pause_blockcache_clean_alloc_locked", [&]() {
+    std::unique_lock<folly::fibers::TimedMutex> lk(mutex);
+    XDCHECK_GT(numCleanRegions, 0u);
+    numCleanRegions--;
+  });
+
+  injectPauseSet("pause_blockcache_clean_free_locked", [&]() {
+    std::unique_lock<folly::fibers::TimedMutex> lk(mutex);
+    if (numCleanRegions++ == 0u) {
+      cv.notifyAll();
+    }
+    reclaimStarted = true;
+  });
+
+  injectPauseSet("pause_blockcache_insert_entry", [&]() {
+    std::unique_lock<folly::fibers::TimedMutex> lk(mutex);
+    if (numCleanRegions == 0u && reclaimStarted) {
+      cv.wait(lk);
+    }
+  });
+
   // Allocator region fills every 16 inserts.
   BufferGen bg;
   std::vector<CacheEntry> log;
@@ -1799,6 +1866,7 @@ TEST(BlockCache, HitsReinsertionPolicy) {
       EXPECT_EQ(Status::Ok, driver->insertAsync(e.key(), e.value(), nullptr));
       log.push_back(std::move(e));
     }
+    // flush region such that the regions are closed
     driver->flush();
   }
 
@@ -1819,7 +1887,9 @@ TEST(BlockCache, HitsReinsertionPolicy) {
     EXPECT_EQ(Status::Ok, driver->insertAsync(e.key(), e.value(), nullptr));
     log.push_back(std::move(e));
   }
-  driver->flush();
+
+  // Drain all insert requests
+  driver->drain();
 
   // First key was deleted so missing
   {
@@ -2011,7 +2081,7 @@ TEST(BlockCache, DeviceFlushFailureSync) {
   auto device = std::make_unique<MockDevice>(kDeviceSize, 1024);
 
   testing::InSequence inSeq;
-  EXPECT_CALL(*device, writeImpl(_, _, _)).WillRepeatedly(Return(false));
+  EXPECT_CALL(*device, writeImpl(_, _, _, _)).WillRepeatedly(Return(false));
 
   auto ex = makeJobScheduler();
   auto config = makeConfig(*ex, std::move(policy), *device);
@@ -2020,11 +2090,20 @@ TEST(BlockCache, DeviceFlushFailureSync) {
   auto engine = makeEngine(std::move(config));
   auto driver = makeDriver(std::move(engine), std::move(ex));
 
+  ENABLE_INJECT_PAUSE_IN_SCOPE();
+
+  injectPauseSet("pause_blockcache_insert_done");
+
   BufferGen bg;
   CacheEntry e{bg.gen(8), bg.gen(800)};
   EXPECT_EQ(Status::Ok, driver->insertAsync(e.key(), e.value(), {}));
+  // Make sure that the insertion is scheduled and allocated a clean region
+  EXPECT_TRUE(injectPauseWait("pause_blockcache_insert_done"));
+
+  // Issue flush sync
   driver->flush();
 
+  // Flush should have failed due to the injected write failures
   driver->getCounters({[](folly::StringPiece name, double count,
                           CounterVisitor::CounterType type) {
     if (name == "navy_bc_inmem_flush_retries" &&
@@ -2044,7 +2123,7 @@ TEST(BlockCache, DeviceFlushFailureAsync) {
   auto device = std::make_unique<MockDevice>(kDeviceSize, 1024);
 
   testing::InSequence inSeq;
-  EXPECT_CALL(*device, writeImpl(_, _, _)).WillRepeatedly(Return(false));
+  EXPECT_CALL(*device, writeImpl(_, _, _, _)).WillRepeatedly(Return(false));
 
   auto ex = makeJobScheduler();
   auto config = makeConfig(*ex, std::move(policy), *device);
@@ -2053,12 +2132,28 @@ TEST(BlockCache, DeviceFlushFailureAsync) {
   auto engine = makeEngine(std::move(config));
   auto driver = makeDriver(std::move(engine), std::move(ex));
 
+  ENABLE_INJECT_PAUSE_IN_SCOPE();
+
+  injectPauseSet("pause_blockcache_insert_done");
+  injectPauseSet("pause_flush_failure");
+
   BufferGen bg;
   CacheEntry e{bg.gen(8), bg.gen(15 * 1024)};
   EXPECT_EQ(Status::Ok, driver->insertAsync(e.key(), e.value(), {}));
+  // Make sure that the insertion is scheduled and allocated a clean region
+  EXPECT_TRUE(injectPauseWait("pause_blockcache_insert_done"));
+
+  // The region size is 16KB, so the second insertions should allocate
+  // a new region and start a flush async for the first region
   EXPECT_EQ(Status::Ok, driver->insertAsync(e.key(), e.value(), {}));
+  EXPECT_TRUE(injectPauseWait("pause_flush_failure"));
+  EXPECT_TRUE(injectPauseWait("pause_blockcache_insert_done"));
+
+  // Now run another flush sync; pause point should be cleared
+  injectPauseClear("pause_flush_failure");
   driver->flush();
 
+  // Flush should have failed due to the injected write failures
   driver->getCounters({[](folly::StringPiece name, double count,
                           CounterVisitor::CounterType type) {
     if (name == "navy_bc_inmem_flush_retries" &&
@@ -2216,7 +2311,37 @@ TEST(BlockCache, RandomAlloc) {
   EXPECT_LT(succ_cnt, (size_t)((double)loopCnt * 3.0 * 1.2 / 4.0));
   EXPECT_LT(stddev, avg * 0.2);
 }
-} // namespace tests
-} // namespace navy
-} // namespace cachelib
-} // namespace facebook
+
+// Test size alignment calculations on an alignment other than the default (512
+// on less than 2TB device size)
+TEST(BlockCache, SizeAndAlignment) {
+  std::vector<uint32_t> hits(4);
+  auto policy = std::make_unique<NiceMock<MockPolicy>>(&hits);
+  // Make the device of 2TB so that we need 1024 bytes alignmetn on block cache.
+  const uint32_t alignSize = 1024;
+  auto device = std::make_unique<SizeMockDevice>(
+      alignSize * (static_cast<uint64_t>(1) << 32));
+  auto ex = makeJobScheduler();
+  // auto* exPtr = ex.get();
+  auto config = makeConfig(*ex, std::move(policy), *device);
+  config.numInMemBuffers = 9;
+
+  config.itemDestructorEnabled = true;
+  auto engine = makeEngine(std::move(config));
+  BufferGen bg;
+  auto smallValue = bg.gen(16);
+  EXPECT_EQ(engine->estimateWriteSize(HashedKey{"key"}, smallValue.view()),
+            alignSize);
+
+  // assumption: the item descriptor size is 24.
+  // Make an item at the size of 1024.
+  auto largeValue = bg.gen(alignSize - 24 - 3);
+  EXPECT_EQ(engine->estimateWriteSize(HashedKey{"key"}, largeValue.view()),
+            alignSize);
+
+  // Add one more byte and need 2*alignSize
+  auto hugeValue = bg.gen(alignSize - 24 - 3 + 1);
+  EXPECT_EQ(engine->estimateWriteSize(HashedKey{"key"}, hugeValue.view()),
+            alignSize * 2);
+}
+} // namespace facebook::cachelib::navy::tests

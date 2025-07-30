@@ -82,7 +82,13 @@ CacheConfig::CacheConfig(const folly::dynamic& configJson) {
   JSONSetVal(configJson, navyProbabilityReinsertionThreshold);
   JSONSetVal(configJson, navyReaderThreads);
   JSONSetVal(configJson, navyWriterThreads);
+  JSONSetVal(configJson, navyMaxNumReads);
+  JSONSetVal(configJson, navyMaxNumWrites);
+  JSONSetVal(configJson, navyStackSizeKB);
+  JSONSetVal(configJson, navyQDepth);
+  JSONSetVal(configJson, navyEnableIoUring);
   JSONSetVal(configJson, navyCleanRegions);
+  JSONSetVal(configJson, navyCleanRegionThreads);
   JSONSetVal(configJson, navyAdmissionWriteRateMB);
   JSONSetVal(configJson, navyMaxConcurrentInserts);
   JSONSetVal(configJson, navyDataChecksum);
@@ -90,10 +96,12 @@ CacheConfig::CacheConfig(const folly::dynamic& configJson) {
   JSONSetVal(configJson, truncateItemToOriginalAllocSizeInNvm);
   JSONSetVal(configJson, navyEncryption);
   JSONSetVal(configJson, deviceMaxWriteSize);
+  JSONSetVal(configJson, deviceEnableFDP);
 
   JSONSetVal(configJson, memoryOnlyTTL);
 
   JSONSetVal(configJson, usePosixShm);
+  JSONSetVal(configJson, lockMemory);
   if (configJson.count("memoryTiers")) {
     for (auto& it : configJson["memoryTiers"]) {
       memoryTierConfigs.push_back(
@@ -112,7 +120,7 @@ CacheConfig::CacheConfig(const folly::dynamic& configJson) {
   // if you added new fields to the configuration, update the JSONSetVal
   // to make them available for the json configs and increment the size
   // below
-  checkCorrectSize<CacheConfig, 832>();
+  checkCorrectSize<CacheConfig, 760>();
 
   if (numPools != poolSizes.size()) {
     throw std::invalid_argument(folly::sformat(
