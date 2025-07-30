@@ -1,0 +1,22 @@
+Bootstrap: docker
+From: ubuntu:24.04
+
+%environment
+ export DEBIAN_FRONTEND=noninteractive
+ export LANG=C.UTF-8 LC_ALL=C.UTF-8
+ export PATH="/usr/local/bin:$PATH"
+ export PYTHONUNBUFFERED=1
+
+%files
+  ../.config/nvim/init.lua /etc/xdg/nvim/init.lua
+  build.py /build.py
+
+%post
+  export DEBIAN_FRONTEND=noninteractive
+  echo 'tzdata tzdata/Areas select Etc' | debconf-set-selections
+  echo 'tzdata tzdata/Zones/Etc select UTC' | debconf-set-selections
+  apt-get update
+  apt-get install -y git sudo vim python3 python3-pandas python3-matplotlib python3-seaborn
+  ./build.py -i
+  rm /build.py
+  
