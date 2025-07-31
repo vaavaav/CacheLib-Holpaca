@@ -6,13 +6,7 @@
 build-*
 
 # Required source-code dependencies, fetched by ./contrib/ scripts.
-cachelib/external/fmt/
-cachelib/external/gflags/
-cachelib/external/glog/
-cachelib/external/googletest/
-cachelib/external/sparsemap/
-cachelib/external/grpc/
-cachelib/external/protobuf/
+cachelib/external/**/*
 opt
 
 # cpp gitignore

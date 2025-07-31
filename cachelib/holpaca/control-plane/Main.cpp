@@ -3,7 +3,6 @@
 #include <cachelib/holpaca/control-plane/algorithms/MarginalHits.h>
 #include <cachelib/holpaca/control-plane/algorithms/Motivation.h>
 #include <cachelib/holpaca/control-plane/algorithms/PerformanceMaximization.h>
-#include <cachelib/holpaca/control-plane/algorithms/Printer.h>
 
 #include <iostream>
 #include <sstream>
