@@ -41,6 +41,7 @@ PerformanceMaximization::PerformanceMaximization(
 void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
   std::chrono::high_resolution_clock::time_point start;
   std::chrono::duration<double, std::milli> collect, compute, enforce;
+  double aggregatedMetrics = 0.0;
 
   // COLLECT
   if (m_kPrintLatencies) {
@@ -160,6 +161,7 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
 
       auto spline =
           tk::spline(cacheSizes, metrics, tk::spline::cspline_hermite, true);
+      aggregatedMetrics += spline(size);
 
       uint64_t lowerBound =
           poolStatus.m_qosLevel > 0.0 &&
@@ -222,7 +224,12 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
     }
   }
 
-  context.run(2000, 250, 90, 0.1, 1.003);
+  double const kAvgMetrics =
+      context.m_cacheConfigs.empty()
+          ? 1.0
+          : aggregatedMetrics / context.m_cacheConfigs.size();
+
+  context.run(2000, 250, kAvgMetrics, 90, 0.1, 1.003);
 
   if (m_kPrintLatencies) {
     compute = std::chrono::duration_cast<std::chrono::milliseconds>(
