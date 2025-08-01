@@ -47,8 +47,9 @@ class CacheAllocator : public ::facebook::cachelib::CacheAllocator<CacheTrait>,
   std::shared_timed_mutex m_shardsMutex;
   std::unordered_map<PoolId, std::shared_ptr<Shards>> m_shards;
 
-  std::shared_timed_mutex m_diskIOPSMutex;
-  std::unordered_map<PoolId, uint32_t> m_diskIOPS;
+  std::shared_timed_mutex m_metricsMutex;
+  std::unordered_map<PoolId, std::pair<uint32_t, double>>
+      m_metrics; // diskIOPS, missRatio
 
   std::shared_timed_mutex m_activePoolsMutex;
   std::unordered_set<PoolId> m_activePools;
@@ -80,7 +81,7 @@ class CacheAllocator : public ::facebook::cachelib::CacheAllocator<CacheTrait>,
 
   WriteHandle insertOrReplace(const WriteHandle& handle);
 
-  void registerDiskIOPS(PoolId poolId, uint32_t diskIOPS);
+  void registerMetrics(PoolId poolId, uint32_t diskIOPS, double missRatio);
 
   void removePool(PoolId id);
 };

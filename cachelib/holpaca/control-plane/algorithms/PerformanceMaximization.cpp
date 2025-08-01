@@ -31,12 +31,14 @@ PerformanceMaximization::PerformanceMaximization(
     MetricType const kMetricType,
     double const kDelta,
     uint64_t const kMaxInternalCacheSize,
-    bool printLatencies)
+    bool printLatencies,
+    bool applyAdjustment)
     : ControlAlgorithm(kProxyManager, kPeriodicity),
       m_kDelta(kDelta),
       m_kMetricType(kMetricType),
       m_kMaxInternalCacheSize(kMaxInternalCacheSize),
-      m_kPrintLatencies(printLatencies) {}
+      m_kPrintLatencies(printLatencies),
+      m_kApplyAdjustment(applyAdjustment) {}
 
 void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
   std::chrono::high_resolution_clock::time_point start;
@@ -132,11 +134,35 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
           cacheSizes.push_back(size);
           metrics.push_back(missRatio);
         }
+        if (m_kApplyAdjustment) {
+          auto spline = tk::spline(cacheSizes, metrics,
+                                   tk::spline::cspline_hermite, true);
+          double adjustment =
+              poolStatus.m_missRatio - spline(poolStatus.m_maxSize);
+
+          for (auto& metric : metrics) {
+            metric += adjustment;
+          }
+        }
       } else { // kThroughput
         for (const auto& [size, missRatio] : poolStatus.m_MRC) {
           cacheSizes.push_back(size);
           metrics.push_back(missRatio ? -poolStatus.m_diskIOPS / missRatio
-                                      : 0.0);
+                                      : -DBL_MAX);
+        }
+        if (m_kApplyAdjustment) {
+          auto spline = tk::spline(cacheSizes, metrics,
+                                   tk::spline::cspline_hermite, true);
+          // ajust the spline with the difference between real and expected
+          auto const kCurrentMetric =
+              poolStatus.m_missRatio
+                  ? -poolStatus.m_diskIOPS / poolStatus.m_missRatio
+                  : -DBL_MAX;
+          double adjustment = kCurrentMetric - spline(poolStatus.m_maxSize);
+
+          for (auto& metric : metrics) {
+            metric += adjustment;
+          }
         }
       }
 
@@ -226,7 +252,7 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
 
   double const kAvgMetrics =
       context.m_cacheConfigs.empty()
-          ? 1.0
+          ? 0.0
           : aggregatedMetrics / context.m_cacheConfigs.size();
 
   context.run(2000, 250, kAvgMetrics, 90, 0.1, 1.003);

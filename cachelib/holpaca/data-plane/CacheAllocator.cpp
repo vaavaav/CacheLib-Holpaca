@@ -119,8 +119,14 @@ grpc::Status CacheAllocator<CacheTrait>::GetStatus(
       }
       {
         poolStatus.set_diskiops([this, poolId]() {
-          // std::shared_lock<std::shared_timed_mutex> lock(m_diskIOPSMutex);
-          return m_diskIOPS[poolId];
+          // std::shared_lock<std::shared_timed_mutex> lock(m_metricsMutex);
+          return m_metrics[poolId].first;
+        }());
+      }
+      {
+        poolStatus.set_missratio([this, poolId]() {
+          // std::shared_lock<std::shared_timed_mutex> lock(m_metricsMutex);
+          return m_metrics[poolId].second;
         }());
       }
       {
@@ -174,8 +180,8 @@ PoolId CacheAllocator<CacheTrait>::addPool(std::string name,
         0.001, this->getCacheMemoryStats().ramCacheSize, 100));
   }
   {
-    std::unique_lock<std::shared_timed_mutex> lock(m_diskIOPSMutex);
-    m_diskIOPS[poolId] = 0;
+    std::unique_lock<std::shared_timed_mutex> lock(m_metricsMutex);
+    m_metrics[poolId] = {0, 1.0}; // diskIOPS, missRatio
   }
   {
     std::unique_lock<std::shared_timed_mutex> lock(m_proportionsMutex);
@@ -243,10 +249,11 @@ CacheAllocator<CacheTrait>::insertOrReplace(
 }
 
 template <typename CacheTrait>
-void CacheAllocator<CacheTrait>::registerDiskIOPS(PoolId poolId,
-                                                  uint32_t diskIOPS) {
-  std::unique_lock<std::shared_timed_mutex> lock(m_diskIOPSMutex);
-  m_diskIOPS[poolId] = diskIOPS;
+void CacheAllocator<CacheTrait>::registerMetrics(PoolId poolId,
+                                                 uint32_t diskIOPS,
+                                                 double missRatio) {
+  std::unique_lock<std::shared_timed_mutex> lock(m_metricsMutex);
+  m_metrics[poolId] = {diskIOPS, missRatio};
 }
 
 template <typename CacheTrait>

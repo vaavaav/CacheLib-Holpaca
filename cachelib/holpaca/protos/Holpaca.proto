@@ -34,13 +34,14 @@ message PoolStatus {
   uint64 maxSize = 2;
   uint64 usedSize = 3;
   uint32 diskIOPS = 4;
-  uint32 evictions = 5;
-  map<string, int64> externalSize = 6;
-  map<int32, uint32> tailAccesses = 7;
-  map<uint64, double> mrc = 8;
-  bool active = 9;
-  double qos = 10;
-  double proportion = 11;
+  double missRatio = 5;
+  uint32 evictions = 6;
+  map<string, int64> externalSize = 7;
+  map<int32, uint32> tailAccesses = 8;
+  map<uint64, double> mrc = 9;
+  bool active = 10;
+  double qos = 11;
+  double proportion = 12;
 };
 
 message CacheStatus {
