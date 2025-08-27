@@ -60,6 +60,8 @@ class CacheAllocator : public ::facebook::cachelib::CacheAllocator<CacheTrait>,
   std::shared_timed_mutex m_proportionsMutex;
   std::unordered_map<PoolId, double> m_proportions;
 
+  uint64_t m_kVirtualSize{0};
+
  public:
   using Config = CacheAllocatorConfig<CacheAllocator<CacheTrait>>;
   using Trait = CacheTrait;

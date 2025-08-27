@@ -59,12 +59,6 @@ class PerformanceMaximization : public ControlAlgorithm {
   std::unordered_map<std::string, std::unordered_set<PoolId>>
       m_previouslyActive{};
 
-  /*
-   * Maximum size that virtual internal cache can take.
-   * This assumes the same value for all instances.
-   */
-  uint64_t const m_kMaxInternalCacheSize;
-
   bool const m_kPrintLatencies{false};
   bool const m_kApplyAdjustment{false};
 
@@ -75,7 +69,6 @@ class PerformanceMaximization : public ControlAlgorithm {
                           std::chrono::milliseconds const kPeriodicity,
                           MetricType const kMetricType,
                           double const kDelta,
-                          uint64_t maxInternalCacheSize,
                           bool printLatencies = false,
                           bool applyAdjustment = false);
 };

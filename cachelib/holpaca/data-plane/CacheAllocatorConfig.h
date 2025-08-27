@@ -12,6 +12,8 @@ class CacheAllocatorConfig
           ::facebook::cachelib::CacheAllocator<typename CacheT::Trait>> {
   std::string m_address;
   std::string m_controllerAddress;
+  int64_t m_virtualSize;
+  bool m_hasVirtualSize{false};
 
  public:
   CacheAllocatorConfig& setAddress(std::string address) {
@@ -21,6 +23,12 @@ class CacheAllocatorConfig
 
   CacheAllocatorConfig& setControllerAddress(std::string address) {
     m_controllerAddress = address;
+    return *this;
+  }
+
+  CacheAllocatorConfig& setVirtualSize(uint64_t size) {
+    m_hasVirtualSize = true;
+    m_virtualSize = size;
     return *this;
   }
 

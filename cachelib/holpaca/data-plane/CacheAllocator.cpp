@@ -8,7 +8,9 @@ namespace holpaca {
 template <typename CacheTrait>
 CacheAllocator<CacheTrait>::CacheAllocator(Config& config)
     : ::facebook::cachelib::CacheAllocator<CacheTrait>(config),
-      m_kAddress(config.m_address) {
+      m_kAddress(config.m_address),
+      m_kVirtualSize(config.m_hasVirtualSize ? config.m_virtualSize
+                                             : config.size) {
   if (!m_kAddress.empty() && !config.m_controllerAddress.empty()) {
     m_server =
         grpc::ServerBuilder()
@@ -95,7 +97,8 @@ grpc::Status CacheAllocator<CacheTrait>::GetStatus(
     ::holpaca::GetStatusResponse* response) {
   auto cacheStatus = response->mutable_cachestatus();
   auto pools = cacheStatus->mutable_pools();
-  cacheStatus->set_maxsize(Super::getCacheMemoryStats().ramCacheSize);
+  cacheStatus->set_maxsize(
+      std::min(m_kVirtualSize, Super::getCacheMemoryStats().ramCacheSize));
 
   for (const auto& poolId : Super::getPoolIds()) {
     const auto& pool = Super::getPool(poolId);

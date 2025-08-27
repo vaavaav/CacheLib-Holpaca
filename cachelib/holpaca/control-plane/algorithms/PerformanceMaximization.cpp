@@ -30,13 +30,11 @@ PerformanceMaximization::PerformanceMaximization(
     std::chrono::milliseconds const kPeriodicity,
     MetricType const kMetricType,
     double const kDelta,
-    uint64_t const kMaxInternalCacheSize,
     bool printLatencies,
     bool applyAdjustment)
     : ControlAlgorithm(kProxyManager, kPeriodicity),
       m_kDelta(kDelta),
       m_kMetricType(kMetricType),
-      m_kMaxInternalCacheSize(kMaxInternalCacheSize),
       m_kPrintLatencies(printLatencies),
       m_kApplyAdjustment(applyAdjustment) {}
 
@@ -94,8 +92,7 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
     cacheChanges[cacheId] = CacheChanges{
         .reset = reset,
         .m_defaultPoolSize = static_cast<uint64_t>(
-            std::min(m_kMaxInternalCacheSize, cacheStatus.m_maxSize) /
-            static_cast<double>(activePoolCount)),
+            cacheStatus.m_maxSize / static_cast<double>(activePoolCount)),
         .m_removedPools = std::move(removedPools),
         .m_activeNotValidPools = std::move(activeNotValidPools),
         .m_validPools = std::move(validPools),

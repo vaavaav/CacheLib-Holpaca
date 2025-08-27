@@ -72,7 +72,7 @@ int main(int argc, char** argv) {
     }
     auto args = split(argv[i + 1], ':');
     if (std::string(argv[i]) == "HitRatioMaximization") {
-      if (args.size() < 3) {
+      if (args.size() < 2) {
         std::cerr
             << "HitRatioMaximization requires 2 arguments: <periodicity (ms)> "
                "<max delta> <max internal cache size> [print latencies]"
@@ -82,10 +82,10 @@ int main(int argc, char** argv) {
       controller.addAlgorithm<PerformanceMaximization>(
           std::chrono::milliseconds(std::stoul(args[0])),
           PerformanceMaximization::MetricType::kHitRatio, std::stod(args[1]),
-          std::stoull(args[2]), args.size() > 3 && args[3] == "true",
-          args.size() > 4 && args[4] == "true");
+          args.size() > 2 && args[2] == "true",
+          args.size() > 3 && args[3] == "true");
     } else if (std::string(argv[i]) == "ThroughputMaximization") {
-      if (args.size() < 3) {
+      if (args.size() < 2) {
         std::cerr
             << "Throughput requires 2 arguments: <periodicity (ms)> "
                "<max delta ([0,1])> <max internal cache size> [print latencies]"
@@ -95,8 +95,8 @@ int main(int argc, char** argv) {
       controller.addAlgorithm<PerformanceMaximization>(
           std::chrono::milliseconds(std::stoul(args[0])),
           PerformanceMaximization::MetricType::kThroughput, std::stod(args[1]),
-          std::stoull(args[2]), args.size() > 3 && args[3] == "true",
-          args.size() > 4 && args[4] == "true");
+          args.size() > 2 && args[2] == "true",
+          args.size() > 3 && args[3] == "true");
     } else if (std::string(argv[i]) == "MarginalHits") {
       if (args.size() < 1) {
         std::cerr << "MarginalHits requires 1 argument: <periodicity (ms)>"
