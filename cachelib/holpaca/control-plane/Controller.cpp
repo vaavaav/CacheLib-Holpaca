@@ -21,6 +21,7 @@ Controller::getStatus() {
     cacheStatus[peer] = CacheStatus{
         .m_maxSize = response.cachestatus().maxsize(),
         .m_pools = {},
+        .m_proportion = response.cachestatus().proportion(),
     };
     for (const auto& [poolId, ps] : response.cachestatus().pools()) {
       cacheStatus[peer].m_pools[poolId] = PoolStatus{

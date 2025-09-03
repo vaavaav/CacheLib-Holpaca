@@ -27,6 +27,7 @@ class ProxyManager {
   struct CacheStatus {
     uint64_t m_maxSize{0};
     std::unordered_map<PoolId, PoolStatus> m_pools{};
+    double m_proportion{1.0};
   };
 
   struct PoolResize {

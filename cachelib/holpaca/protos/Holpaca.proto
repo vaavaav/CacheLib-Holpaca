@@ -47,6 +47,7 @@ message PoolStatus {
 message CacheStatus {
   map<int32, PoolStatus> pools = 1;
   uint64 maxSize = 2;
+  double proportion = 3;
 }
 
 message ConnectRequest {

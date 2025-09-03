@@ -14,6 +14,7 @@ class CacheAllocatorConfig
   std::string m_controllerAddress;
   int64_t m_virtualSize;
   bool m_hasVirtualSize{false};
+  double proportion{1.0};
 
  public:
   CacheAllocatorConfig& setAddress(std::string address) {
@@ -26,9 +27,16 @@ class CacheAllocatorConfig
     return *this;
   }
 
+  // Below are things for control algorithms
+
   CacheAllocatorConfig& setVirtualSize(uint64_t size) {
     m_hasVirtualSize = true;
     m_virtualSize = size;
+    return *this;
+  }
+
+  CacheAllocatorConfig& setProportion(double proportion) {
+    this->proportion = proportion;
     return *this;
   }
 

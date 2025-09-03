@@ -16,25 +16,32 @@ void Motivation::loop(ProxyManager* const kProxyManager) {
   uint64_t totalSize = 0;
   std::vector<ProxyManager::CacheResize> cacheResizes;
 
-  for (const auto& [cacheId, cacheStatus] : kProxyManager->getStatus()) {
+  auto caches = kProxyManager->getStatus();
+
+  for (const auto& [cacheId, cacheStatus] : caches) {
+    uint64_t cacheSize = 0;
     for (const auto& [poolId, poolStatus] : cacheStatus.m_pools) {
       if (poolStatus.m_isActive) {
-        sum += poolStatus.m_proportion;
+        sum += poolStatus.m_proportion * cacheStatus.m_proportion;
         m_originalSizes.insert(
             {poolId, poolStatus.m_maxSize}); // Store original sizes
-        totalSize += m_originalSizes[poolId];
+        cacheSize += m_originalSizes[poolId];
       }
     }
     if (m_useUnallocatedSize) {
-      totalSize = cacheStatus.m_maxSize;
+      cacheSize = cacheStatus.m_maxSize;
     }
+    totalSize += cacheSize;
+  }
+
+  for (const auto& [cacheId, cacheStatus] : caches) {
     ProxyManager::CacheResize cacheResize;
     std::vector<ProxyManager::PoolResize> poolResizes;
     for (const auto& [poolId, poolStatus] : cacheStatus.m_pools) {
       if (poolStatus.m_isActive) {
-        auto delta =
-            static_cast<int64_t>(totalSize * poolStatus.m_proportion / sum) -
-            static_cast<int64_t>(poolStatus.m_maxSize);
+        auto delta = static_cast<int64_t>(totalSize * poolStatus.m_proportion *
+                                          cacheStatus.m_proportion / sum) -
+                     static_cast<int64_t>(poolStatus.m_maxSize);
         if (delta != 0) {
           poolResizes.emplace_back(ProxyManager::PoolResize{
               .m_kId = poolId,
