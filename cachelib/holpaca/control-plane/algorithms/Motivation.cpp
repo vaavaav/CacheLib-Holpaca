@@ -30,9 +30,10 @@ void Motivation::loop(ProxyManager* const kProxyManager) {
     std::vector<ProxyManager::PoolResize> poolResizes;
     for (const auto& [poolId, poolStatus] : cacheStatus.m_pools) {
       if (poolStatus.m_isActive) {
-        auto delta = static_cast<int64_t>(totalSize * poolStatus.m_proportion *
-                                          cacheStatus.m_proportion / sum) -
-                     static_cast<int64_t>(poolStatus.m_maxSize);
+        int64_t delta =
+            static_cast<int64_t>(totalSize * poolStatus.m_proportion *
+                                 cacheStatus.m_proportion / sum) -
+            static_cast<int64_t>(poolStatus.m_maxSize);
         if (delta != 0) {
           poolResizes.emplace_back(ProxyManager::PoolResize{
               .m_kId = poolId,
