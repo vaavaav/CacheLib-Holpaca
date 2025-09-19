@@ -117,7 +117,7 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
             auto spline = tk::spline(cacheSizes, metrics,
                                      tk::spline::cspline_hermite, true);
             double adjustment =
-                poolStatus.m_missRatio - spline(poolStatus.m_usedSize);
+                poolStatus.m_missRatio - spline(poolStatus.m_maxSize);
             for (auto& metric : metrics) {
               metric += adjustment;
             }
@@ -132,7 +132,7 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
                 (poolStatus.m_missRatio
                      ? -poolStatus.m_diskIOPS / poolStatus.m_missRatio
                      : -DBL_MAX) -
-                spline(poolStatus.m_usedSize);
+                spline(poolStatus.m_maxSize);
             for (auto& metric : metrics) {
               metric += adjustment;
             }
