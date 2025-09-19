@@ -20,23 +20,21 @@ Controller::getStatus() {
     proxy->GetStatus(&context, request, &response);
     cacheStatus[peer] = CacheStatus{
         .m_maxSize = response.cachestatus().maxsize(),
-        .m_pools = {},
         .m_proportion = response.cachestatus().proportion(),
+        .m_pools = {},
     };
     for (const auto& [poolId, ps] : response.cachestatus().pools()) {
       cacheStatus[peer].m_pools[poolId] = PoolStatus{
-          .m_isActive = ps.active(),
           .m_maxSize = ps.maxsize(),
           .m_usedSize = ps.usedsize(),
           .m_diskIOPS = ps.diskiops(),
+          .m_missRatio = ps.missratio(),
           .m_evictions = ps.evictions(),
-          .m_externalSize = {ps.externalsize().begin(),
-                             ps.externalsize().end()},
-          .m_tailAccesses = {ps.tailaccesses().begin(),
-                             ps.tailaccesses().end()},
-          .m_MRC = {ps.mrc().begin(), ps.mrc().end()},
           .m_qosLevel = ps.qos(),
           .m_proportion = ps.proportion(),
+          .m_MRC = {ps.mrc().begin(), ps.mrc().end()},
+          .m_tailAccesses = {ps.tailaccesses().begin(),
+                             ps.tailaccesses().end()},
       };
     }
   }
@@ -84,14 +82,11 @@ void Controller::resize(
     ::grpc::ClientContext context;
     ::holpaca::ResizeRequest request;
     ::holpaca::ResizeResponse response;
-    auto deltaSizes = request.mutable_poolsizes();
+    auto sizes = request.mutable_poolsizes();
     for (const auto& poolResize : resizeOp.m_kPoolResizes) {
       ::holpaca::PoolSize poolSize;
-      poolSize.set_deltasize(poolResize.m_kDeltaSize);
-      *poolSize.mutable_externaldeltasizes() = {
-          poolResize.m_kExternalDeltaSizes.begin(),
-          poolResize.m_kExternalDeltaSizes.end()};
-      (*deltaSizes)[poolResize.m_kId] = poolSize;
+      poolSize.set_size(poolResize.m_kSize);
+      (*sizes)[poolResize.m_kId] = poolSize;
     }
     proxy->Resize(&context, request, &response);
   }
@@ -113,6 +108,7 @@ grpc::Status Controller::Disconnect(grpc::ServerContext* context,
                                     const ::holpaca::DisconnectRequest* request,
                                     ::holpaca::DisconnectResponse* response) {
   std::unique_lock<std::shared_timed_mutex> lock(m_proxiesMutex);
+  std::cout << "Disconnected from " << request->cacheaddress() << std::endl;
   m_proxies.erase(request->cacheaddress());
   return grpc::Status::OK;
 }

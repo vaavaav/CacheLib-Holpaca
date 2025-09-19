@@ -82,8 +82,7 @@ int main(int argc, char** argv) {
       controller.addAlgorithm<PerformanceMaximization>(
           std::chrono::milliseconds(std::stoul(args[0])),
           PerformanceMaximization::MetricType::kHitRatio, std::stod(args[1]),
-          args.size() > 2 && args[2] == "true",
-          args.size() > 3 && args[3] == "true");
+          args.size() > 2 && args[2] == "true");
     } else if (std::string(argv[i]) == "ThroughputMaximization") {
       if (args.size() < 2) {
         std::cerr
@@ -95,8 +94,7 @@ int main(int argc, char** argv) {
       controller.addAlgorithm<PerformanceMaximization>(
           std::chrono::milliseconds(std::stoul(args[0])),
           PerformanceMaximization::MetricType::kThroughput, std::stod(args[1]),
-          args.size() > 2 && args[2] == "true",
-          args.size() > 3 && args[3] == "true");
+          args.size() > 2 && args[2] == "true");
     } else if (std::string(argv[i]) == "MarginalHits") {
       if (args.size() < 1) {
         std::cerr << "MarginalHits requires 1 argument: <periodicity (ms)>"

@@ -54,21 +54,23 @@ void MarginalHits::loop(ProxyManager* const kProxyManager) {
                             [&](auto const& a, auto const& b) {
                               return m_smoothedRanks[a] < m_smoothedRanks[b];
                             });
+
       std::unordered_map<PoolId, int64_t> const deltas{
           {victim, -s_kPoolMinSizeSlabs}, {receiver, s_kPoolMinSizeSlabs}};
 
       cacheResizes.emplace_back(ProxyManager::CacheResize{
           .m_kName = cacheId,
-          .m_kPoolResizes =
-              {
-                  ProxyManager::PoolResize{
-                      .m_kId = victim,
-                      .m_kDeltaSize = -s_kPoolMinSizeSlabs,
-                  },
-                  ProxyManager::PoolResize{.m_kId = receiver,
-                                           .m_kDeltaSize = s_kPoolMinSizeSlabs},
-              },
-      });
+          .m_kPoolResizes = {
+              ProxyManager::PoolResize{
+                  .m_kId = victim,
+                  .m_kSize = allCacheStatus[cacheId].m_pools[victim].m_maxSize -
+                             s_kPoolMinSizeSlabs},
+              ProxyManager::PoolResize{
+                  .m_kId = receiver,
+                  .m_kSize =
+                      allCacheStatus[cacheId].m_pools[receiver].m_maxSize +
+                      s_kPoolMinSizeSlabs},
+          }});
     }
   }
   if (!cacheResizes.empty()) {

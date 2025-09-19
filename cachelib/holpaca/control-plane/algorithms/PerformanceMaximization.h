@@ -32,11 +32,10 @@ class PerformanceMaximization : public ControlAlgorithm {
  private:
   struct PoolConfig {
     uint64_t m_optimalSize;
-    uint64_t const m_kCurrentSize;
-    tk::spline m_utilityCurve;
-    std::unordered_map<std::string, int64_t> m_externalSize{};
     uint64_t m_lowerBound{0};
     uint64_t m_upperBound{0};
+    tk::spline m_utilityCurve;
+    std::unordered_map<std::string, uint64_t> m_externalSize{};
     double getMetric() const { return m_utilityCurve(m_optimalSize); };
   };
 
@@ -53,14 +52,12 @@ class PerformanceMaximization : public ControlAlgorithm {
   };
 
   MetricType const m_kMetricType;
-  double const m_kDelta;
+  // The maximum change in size (as a fraction of current size) per iteration
+  double const m_kDelta{0.05};
+  // Minimum length of MRC to consider the pool for optimization
   const uint32_t m_kMRCMinLength{3};
-  std::unordered_map<std::string, double> const m_kQoS{};
-  std::unordered_map<std::string, std::unordered_set<PoolId>>
-      m_previouslyActive{};
 
   bool const m_kPrintLatencies{false};
-  bool const m_kApplyAdjustment{false};
 
   void loop(ProxyManager* const kProxyManager) override final;
 
@@ -69,8 +66,7 @@ class PerformanceMaximization : public ControlAlgorithm {
                           std::chrono::milliseconds const kPeriodicity,
                           MetricType const kMetricType,
                           double const kDelta,
-                          bool printLatencies = false,
-                          bool applyAdjustment = false);
+                          bool printLatencies = false);
 };
 
 } // namespace holpaca

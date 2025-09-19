@@ -43,22 +43,12 @@ grpc::Status CacheAllocator<CacheTrait>::Resize(
     const ::holpaca::ResizeRequest* request,
     ::holpaca::ResizeResponse* response) {
   // CacheLib provides a resize method based on relative (not absolute sizes)
-  std::vector<std::pair<int32_t, int64_t>> sortedRelSizes; // relSizes may
-                                                           // be negative
+  std::vector<std::pair<PoolId, int64_t>> sortedRelSizes; // relSizes may
+                                                          // be negative
   for (const auto& [poolId, poolsize] : request->poolsizes()) {
-    sortedRelSizes.push_back({poolId, poolsize.deltasize()});
-    // update external size
-    {
-      // std::unique_lock<std::shared_timed_mutex> lock(m_externalSizeMutex);
-      for (const auto& [externalCache, extSize] :
-           poolsize.externaldeltasizes()) {
-        m_externalSize[poolId].insert({externalCache, 0});
-        m_externalSize[poolId][externalCache] += extSize;
-        if (m_externalSize[poolId][externalCache] == 0) {
-          m_externalSize[poolId].erase(externalCache);
-        }
-      }
-    }
+    sortedRelSizes.push_back(
+        {static_cast<PoolId>(poolId),
+         poolsize.size() - Super::getPool(poolId).getPoolSize()});
   }
 
   // resizing must be done in order from the most to least downsized pool
@@ -104,19 +94,13 @@ grpc::Status CacheAllocator<CacheTrait>::GetStatus(
 
   for (const auto& poolId : Super::getPoolIds()) {
     const auto& pool = Super::getPool(poolId);
-    ::holpaca::PoolStatus poolStatus;
     bool const isActive = [&]() {
       std::shared_lock<std::shared_timed_mutex> lock(m_activePoolsMutex);
       return m_activePools.find(poolId) != m_activePools.end();
     }();
-    // get ExternalSize
-    {
-      std::shared_lock<std::shared_timed_mutex> lock(m_externalSizeMutex);
-      const auto& map = m_externalSize[poolId];
-      *poolStatus.mutable_externalsize() = {map.begin(), map.end()};
-    }
-    // get MRC
     if (isActive) {
+      ::holpaca::PoolStatus poolStatus;
+      // get MRC
       {
         // std::shared_lock<std::shared_timed_mutex> lock(m_shardsMutex);
         auto const& mrc = m_shards[poolId]->mrc();
@@ -146,19 +130,17 @@ grpc::Status CacheAllocator<CacheTrait>::GetStatus(
           return m_proportions[poolId];
         }());
       }
+      auto pstats = Super::getPoolStats(poolId);
+      poolStatus.set_poolid(poolId);
+      poolStatus.set_maxsize(pool.getPoolSize());
+      poolStatus.set_usedsize(pool.getCurrentAllocSize());
+      poolStatus.set_evictions(pstats.numEvictions());
+      auto tailAccesses = poolStatus.mutable_tailaccesses();
+      for (const auto& [classId, stats] : pstats.cacheStats) {
+        (*tailAccesses)[classId] = stats.containerStat.numTailAccesses;
+      }
+      (*pools)[poolId] = poolStatus;
     }
-    // get active
-    poolStatus.set_active(isActive);
-    auto pstats = Super::getPoolStats(poolId);
-    poolStatus.set_poolid(poolId);
-    poolStatus.set_maxsize(pool.getPoolSize());
-    poolStatus.set_usedsize(pool.getCurrentAllocSize());
-    poolStatus.set_evictions(pstats.numEvictions());
-    auto tailAccesses = poolStatus.mutable_tailaccesses();
-    for (const auto& [classId, stats] : pstats.cacheStats) {
-      (*tailAccesses)[classId] = stats.containerStat.numTailAccesses;
-    }
-    (*pools)[poolId] = poolStatus;
   }
 
   return grpc::Status::OK;
@@ -279,10 +261,6 @@ void CacheAllocator<CacheTrait>::removePool(PoolId id) {
   //  {
   //    std::unique_lock<std::shared_timed_mutex> lock(m_qosLevelsMutex);
   //    m_qosLevels.erase(id);
-  //  }
-  //  {
-  //    std::unique_lock<std::shared_timed_mutex> lock(m_externalSizeMutex);
-  //    m_externalSize.erase(id);
   //  }
   //  {
   //    std::unique_lock<std::shared_timed_mutex> lock(m_proportionsMutex);
