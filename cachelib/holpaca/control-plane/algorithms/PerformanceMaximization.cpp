@@ -59,7 +59,7 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
       newPoolSizePerCache[cacheId] = {};
       totalSize += cacheStatus.m_maxSize;
       for (const auto& [poolId, poolStatus] : cacheStatus.m_pools) {
-        if (poolStatus.m_maxSize == 0) {
+        if (poolStatus.m_MRC.size() < m_kMRCMinLength) {
           newPools++;
         }
         pools++;
@@ -68,7 +68,7 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
 
     for (const auto& [cacheId, cacheStatus] : allCacheStatus) {
       for (const auto& [poolId, poolStatus] : cacheStatus.m_pools) {
-        if (poolStatus.m_maxSize > 0) {
+        if (poolStatus.m_MRC.size() >= m_kMRCMinLength) {
           usedSpace += poolStatus.m_maxSize;
         } else {
           newPoolSizePerCache[cacheId][poolId] =
@@ -90,7 +90,7 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
 
     for (const auto& [cacheId, cacheStatus] : allCacheStatus) {
       for (const auto& [poolId, poolStatus] : cacheStatus.m_pools) {
-        if (poolStatus.m_maxSize > 0) {
+        if (poolStatus.m_MRC.size() >= m_kMRCMinLength) {
           newPoolSizePerCache[cacheId][poolId] = std::max(
               0.0, poolStatus.m_maxSize * kAdjustmentFactor + kAdjustmentDelta);
         }
@@ -124,29 +124,22 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
             }
           } else if (m_kMetricType == MetricType::kThroughput) {
             for (const auto& [size, mr] : poolStatus.m_MRC) {
-              cacheSizes.push_back(size);
-              // metrics.push_back(mr ? -poolStatus.m_diskIOPS / mr : -DBL_MAX);
-              metrics.push_back(
-                  poolStatus.m_diskIOPS ? mr / poolStatus.m_diskIOPS : 1.0);
+              if (mr > 0.0) {
+                cacheSizes.push_back(size);
+                metrics.push_back(-poolStatus.m_diskIOPS / mr);
+              }
             }
             auto spline = tk::spline(cacheSizes, metrics,
                                      tk::spline::cspline_hermite, true);
-            /*
-            double const kAdjustment =
-                (poolStatus.m_missRatio
-                     ? -poolStatus.m_diskIOPS / poolStatus.m_missRatio
-                     : -DBL_MAX) -
-                spline(poolStatus.m_maxSize);
-                */
-            double const kAdjustment =
-                (poolStatus.m_diskIOPS
-                     ? poolStatus.m_missRatio / poolStatus.m_diskIOPS
-                     : 1.0) -
-                spline(poolStatus.m_maxSize);
+            //           double const kAdjustment =
+            //               (poolStatus.m_missRatio
+            //                    ? -poolStatus.m_diskIOPS /
+            //                    poolStatus.m_missRatio : -DBL_MAX) -
+            //               spline(poolStatus.m_maxSize);
 
-            for (auto& metric : metrics) {
-              metric += kAdjustment;
-            }
+            //           for (auto& metric : metrics) {
+            //             metric += kAdjustment;
+            //           }
           }
 
           auto const kSize = newPoolSizePerCache[cacheId][poolId];
@@ -188,24 +181,25 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
         newPoolSizePerCache[cacheId][poolId] = poolConfig.m_optimalSize;
       }
     }
+
     /*
-        std::stringstream ss;
-        ss << "TotalSize: " << totalSize << std::endl;
-        for (auto const& [cacheId, cacheStatus] : allCacheStatus) {
-          ss << "C[" << cacheId << "]: " << cacheStatus.m_maxSize << std::endl;
-          for (auto const& [poolId, poolStatus] : cacheStatus.m_pools) {
-            if (poolStatus.m_maxSize == 0) {
-              ss << " !NEW! ";
-            }
-            ss << "C[" << cacheId << "] P[" << static_cast<uint32_t>(poolId)
-               << "]: " << newPoolSizePerCache[cacheId][poolId] << " -> "
-               << newPoolSizePerCache[cacheId][poolId] << std::endl;
-            ss << "\tMR: " << (poolStatus.m_missRatio) << std::endl;
-            ss << "\tdisk IOPS: " << (poolStatus.m_diskIOPS) << std::endl;
-          }
+    std::stringstream ss;
+    ss << "TotalSize: " << totalSize << std::endl;
+    for (auto const& [cacheId, cacheStatus] : allCacheStatus) {
+      ss << "C[" << cacheId << "]: " << cacheStatus.m_maxSize << std::endl;
+      for (auto const& [poolId, poolStatus] : cacheStatus.m_pools) {
+        if (poolStatus.m_MRC.size() < m_kMRCMinLength) {
+          ss << " !NEW! ";
         }
-        std::cout << ss.str();
-        */
+        ss << "C[" << cacheId << "] P[" << static_cast<uint32_t>(poolId)
+           << "]: " << newPoolSizePerCache[cacheId][poolId] << " -> "
+           << newPoolSizePerCache[cacheId][poolId] << std::endl;
+        ss << "\tMR: " << (poolStatus.m_missRatio) << std::endl;
+        ss << "\tdisk IOPS: " << (poolStatus.m_diskIOPS) << std::endl;
+      }
+    }
+    std::cout << ss.str();
+    */
 
     for (const auto& [cacheId, pools] : newPoolSizePerCache) {
       std::vector<ProxyManager::PoolResize> poolResizes;
