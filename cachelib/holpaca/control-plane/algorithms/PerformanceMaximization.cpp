@@ -116,25 +116,36 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
             }
             auto spline = tk::spline(cacheSizes, metrics,
                                      tk::spline::cspline_hermite, true);
-            double adjustment =
+            double const kAdjustment =
                 poolStatus.m_missRatio - spline(poolStatus.m_maxSize);
+
             for (auto& metric : metrics) {
-              metric += adjustment;
+              metric += kAdjustment;
             }
           } else if (m_kMetricType == MetricType::kThroughput) {
             for (const auto& [size, mr] : poolStatus.m_MRC) {
               cacheSizes.push_back(size);
-              metrics.push_back(mr ? -poolStatus.m_diskIOPS / mr : -DBL_MAX);
+              // metrics.push_back(mr ? -poolStatus.m_diskIOPS / mr : -DBL_MAX);
+              metrics.push_back(
+                  poolStatus.m_diskIOPS ? mr / poolStatus.m_diskIOPS : 1.0);
             }
             auto spline = tk::spline(cacheSizes, metrics,
                                      tk::spline::cspline_hermite, true);
-            double adjustment =
+            /*
+            double const kAdjustment =
                 (poolStatus.m_missRatio
                      ? -poolStatus.m_diskIOPS / poolStatus.m_missRatio
                      : -DBL_MAX) -
                 spline(poolStatus.m_maxSize);
+                */
+            double const kAdjustment =
+                (poolStatus.m_diskIOPS
+                     ? poolStatus.m_missRatio / poolStatus.m_diskIOPS
+                     : 1.0) -
+                spline(poolStatus.m_maxSize);
+
             for (auto& metric : metrics) {
-              metric += adjustment;
+              metric += kAdjustment;
             }
           }
 
