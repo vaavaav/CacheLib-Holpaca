@@ -64,6 +64,18 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
         }
         pools++;
         // update pool metrics history
+        if (m_poolAvgMetricsHistory.find(cacheId) ==
+            m_poolAvgMetricsHistory.end()) {
+          m_poolAvgMetricsHistory[cacheId] = {};
+        }
+        if (m_poolAvgMetricsHistory[cacheId].find(poolId) ==
+            m_poolAvgMetricsHistory[cacheId].end()) {
+          m_poolAvgMetricsHistory[cacheId][poolId] = PoolAvgMetrics{
+              .m_missRatio = poolStatus.m_missRatio,
+              .m_diskIOPS = poolStatus.m_diskIOPS,
+          };
+        }
+
         auto& poolAvgMetrics = m_poolAvgMetricsHistory[cacheId][poolId];
         poolAvgMetrics.m_diskIOPS =
             (poolAvgMetrics.m_diskIOPS * m_kMovingAverageParam +
@@ -126,6 +138,8 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
               cacheSizes.push_back(size);
               metrics.push_back(mr);
             }
+            auto const kAvgMissRatio =
+                m_poolAvgMetricsHistory[cacheId][poolId].m_missRatio;
             spline = tk::spline(cacheSizes, metrics,
                                 tk::spline::cspline_hermite, true);
             double const kAdjustment =
@@ -140,26 +154,26 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
                                 tk::spline::cspline_hermite, true);
 
             if (0.0 < poolStatus.m_qosLevel &&
-                poolStatus.m_qosLevel > -spline(poolStatus.m_maxSize)) {
+                poolStatus.m_qosLevel > 1 - kAvgMissRatio) {
               lowerBound = kSize;
             }
 
           } else if (m_kMetricType == MetricType::kThroughput) {
-            for (const auto& [size, mr] : poolStatus.m_MRC) {
-              if (mr > 0.0) {
-                cacheSizes.push_back(size);
-                metrics.push_back(-poolStatus.m_diskIOPS / mr);
-              }
-            }
-            auto spline = tk::spline(cacheSizes, metrics,
-                                     tk::spline::cspline_hermite, true);
-            auto const kAvgMissRatio =
-                m_poolAvgMetricsHistory[cacheId][poolId].m_missRatio;
             auto const kAvgDiskIOPS =
                 m_poolAvgMetricsHistory[cacheId][poolId].m_diskIOPS;
 
+            for (const auto& [size, mr] : poolStatus.m_MRC) {
+              if (mr > 0.0) {
+                cacheSizes.push_back(size);
+                metrics.push_back(-kAvgDiskIOPS / mr);
+              }
+            }
+            spline = tk::spline(cacheSizes, metrics,
+                                tk::spline::cspline_hermite, true);
+            auto const kAvgMissRatio =
+                m_poolAvgMetricsHistory[cacheId][poolId].m_missRatio;
             double const kAdjustment =
-                (kAvgMissRatio ? -kAvgDiskIOPS / kAvgMissRatio : -DBL_MAX) -
+                (kAvgMissRatio ? -(kAvgDiskIOPS / kAvgMissRatio) : -DBL_MAX) -
                 spline(poolStatus.m_maxSize);
 
             for (auto& metric : metrics) {
@@ -170,7 +184,7 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
                                 tk::spline::cspline_hermite, true);
 
             if (0.0 < poolStatus.m_qosLevel &&
-                poolStatus.m_qosLevel > 1 - spline(poolStatus.m_maxSize)) {
+                poolStatus.m_qosLevel > kAvgDiskIOPS / kAvgMissRatio) {
               lowerBound = kSize;
             }
           }
@@ -204,6 +218,7 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
       }
     }
 
+    /*
     std::stringstream ss;
     ss << "TotalSize: " << totalSize << std::endl;
     for (auto const& [cacheId, cacheStatus] : allCacheStatus) {
@@ -214,18 +229,36 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
         }
         ss << "C[" << cacheId << "] P[" << static_cast<uint32_t>(poolId)
            << "]: " << newPoolSizePerCache[cacheId][poolId] << " -> "
-           << newPoolSizePerCache[cacheId][poolId] << std::endl;
-        ss << "\tMR: " << (poolStatus.m_missRatio) << std::endl;
-        ss << "\tdisk IOPS: " << (poolStatus.m_diskIOPS) << std::endl;
-        ss << "\t Avg MR: "
-           << (m_poolAvgMetricsHistory[cacheId][poolId].m_missRatio)
+           << newPoolSizePerCache[cacheId][poolId];
+        if (poolStatus.m_MRC.size() >= m_kMRCMinLength) {
+          ss << " ["
+             << context.m_cacheConfigs[cacheId]
+                    .m_poolConfigs[poolId]
+                    .m_lowerBound
+             << ", "
+             << context.m_cacheConfigs[cacheId]
+                    .m_poolConfigs[poolId]
+                    .m_upperBound
+             << "]";
+        }
+        ss << std::endl;
+        ss << "\tQoS: " << (poolStatus.m_qosLevel) << std::endl;
+        ss << "\tMR: " << (poolStatus.m_missRatio) << "\t~("
+           << m_poolAvgMetricsHistory[cacheId][poolId].m_missRatio << ")"
            << std::endl;
-        ss << "\t Avg disk IOPS: "
-           << (m_poolAvgMetricsHistory[cacheId][poolId].m_diskIOPS)
+        ss << "\tdisk IOPS: " << (poolStatus.m_diskIOPS) << "\t~("
+           << m_poolAvgMetricsHistory[cacheId][poolId].m_diskIOPS << ")"
+           << std::endl;
+        ss << "\testimated IOPS: "
+           << (m_poolAvgMetricsHistory[cacheId][poolId].m_missRatio
+                   ? (m_poolAvgMetricsHistory[cacheId][poolId].m_diskIOPS /
+                      m_poolAvgMetricsHistory[cacheId][poolId].m_missRatio)
+                   : 0.0)
            << std::endl;
       }
     }
     std::cout << ss.str();
+    */
 
     for (const auto& [cacheId, pools] : newPoolSizePerCache) {
       std::vector<ProxyManager::PoolResize> poolResizes;

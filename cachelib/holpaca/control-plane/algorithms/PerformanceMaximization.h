@@ -35,7 +35,6 @@ class PerformanceMaximization : public ControlAlgorithm {
     uint64_t m_lowerBound{0};
     uint64_t m_upperBound{0};
     tk::spline m_utilityCurve;
-    std::unordered_map<std::string, uint64_t> m_externalSize{};
     double getMetric() const { return m_utilityCurve(m_optimalSize); };
   };
 
