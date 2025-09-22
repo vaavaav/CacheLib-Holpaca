@@ -59,6 +59,16 @@ class PerformanceMaximization : public ControlAlgorithm {
 
   bool const m_kPrintLatencies{false};
 
+  struct PoolAvgMetrics {
+    double m_missRatio{1.0};
+    uint32_t m_diskIOPS{0};
+  };
+
+  std::unordered_map<std::string, std::unordered_map<PoolId, PoolAvgMetrics>>
+      m_poolAvgMetricsHistory;
+
+  const double m_kMovingAverageParam{0.3};
+
   void loop(ProxyManager* const kProxyManager) override final;
 
  public:
