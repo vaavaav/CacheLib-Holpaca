@@ -116,14 +116,18 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
         if (poolStatus.m_MRC.size() >= m_kMRCMinLength) {
           std::vector<double> cacheSizes;
           std::vector<double> metrics;
+          auto const kSize = newPoolSizePerCache[cacheId][poolId];
+          uint64_t lowerBound = (1.0 - m_kDelta) * kSize;
+
+          tk::spline spline;
 
           if (m_kMetricType == MetricType::kHitRatio) {
             for (const auto& [size, mr] : poolStatus.m_MRC) {
               cacheSizes.push_back(size);
               metrics.push_back(mr);
             }
-            auto spline = tk::spline(cacheSizes, metrics,
-                                     tk::spline::cspline_hermite, true);
+            spline = tk::spline(cacheSizes, metrics,
+                                tk::spline::cspline_hermite, true);
             double const kAdjustment =
                 m_poolAvgMetricsHistory[cacheId][poolId].m_missRatio -
                 spline(poolStatus.m_maxSize);
@@ -131,6 +135,15 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
             for (auto& metric : metrics) {
               metric += kAdjustment;
             }
+
+            spline = tk::spline(cacheSizes, metrics,
+                                tk::spline::cspline_hermite, true);
+
+            if (0.0 < poolStatus.m_qosLevel &&
+                poolStatus.m_qosLevel > -spline(poolStatus.m_maxSize)) {
+              lowerBound = kSize;
+            }
+
           } else if (m_kMetricType == MetricType::kThroughput) {
             for (const auto& [size, mr] : poolStatus.m_MRC) {
               if (mr > 0.0) {
@@ -152,24 +165,21 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
             for (auto& metric : metrics) {
               metric += kAdjustment;
             }
+
+            spline = tk::spline(cacheSizes, metrics,
+                                tk::spline::cspline_hermite, true);
+
+            if (0.0 < poolStatus.m_qosLevel &&
+                poolStatus.m_qosLevel > 1 - spline(poolStatus.m_maxSize)) {
+              lowerBound = kSize;
+            }
           }
 
-          auto const kSize = newPoolSizePerCache[cacheId][poolId];
-
-          auto spline = tk::spline(cacheSizes, metrics,
-                                   tk::spline::cspline_hermite, true);
           aggregatedMetrics += spline(kSize);
 
           auto poolConfig = PoolConfig{
               .m_optimalSize = kSize,
-              .m_lowerBound =
-                  poolStatus.m_qosLevel > 0.0 &&
-                          (spline(kSize) >
-                           (m_kMetricType == MetricType::kHitRatio
-                                ? 1 - poolStatus.m_qosLevel
-                                : poolStatus.m_qosLevel))
-                      ? kSize
-                      : static_cast<uint64_t>((1.0 - m_kDelta) * kSize),
+              .m_lowerBound = lowerBound,
               .m_upperBound = static_cast<uint64_t>(kSize * (1 + m_kDelta)),
               .m_utilityCurve = std::move(spline),
           };
