@@ -61,6 +61,7 @@ class PerformanceMaximization : public ControlAlgorithm {
   struct PoolAvgMetrics {
     double m_missRatio{1.0};
     uint32_t m_diskIOPS{0};
+    uint32_t m_throughput{0};
   };
 
   std::unordered_map<std::string, std::unordered_map<PoolId, PoolAvgMetrics>>

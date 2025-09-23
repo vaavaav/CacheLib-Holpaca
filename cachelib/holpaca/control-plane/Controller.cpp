@@ -28,6 +28,7 @@ Controller::getStatus() {
           .m_maxSize = ps.maxsize(),
           .m_usedSize = ps.usedsize(),
           .m_diskIOPS = ps.diskiops(),
+          .m_throughput = ps.throughput(),
           .m_missRatio = ps.missratio(),
           .m_evictions = ps.evictions(),
           .m_qosLevel = ps.qos(),

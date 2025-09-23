@@ -14,6 +14,7 @@ class ProxyManager {
     uint64_t m_maxSize{0};
     uint64_t m_usedSize{0};
     uint32_t m_diskIOPS{0};
+    uint32_t m_throughput{0};
     double m_missRatio{1.0};
     uint32_t m_evictions{0};
     double m_qosLevel{0.0};

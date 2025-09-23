@@ -39,17 +39,12 @@ class CacheAllocator : public ::facebook::cachelib::CacheAllocator<CacheTrait>,
 
   using Super = ::facebook::cachelib::CacheAllocator<CacheTrait>;
 
-  std::shared_timed_mutex m_externalSizeMutex;
-  std::unordered_map<PoolId, std::unordered_map<std::string, int64_t>>
-      m_externalSize; // +: acquired spaced on the external cache,
-                      // -: space lent to the external cache
-
   std::shared_timed_mutex m_shardsMutex;
   std::unordered_map<PoolId, std::shared_ptr<Shards>> m_shards;
 
   std::shared_timed_mutex m_metricsMutex;
-  std::unordered_map<PoolId, std::pair<uint32_t, double>>
-      m_metrics; // diskIOPS, missRatio
+  std::unordered_map<PoolId, std::tuple<uint32_t, double, uint32_t>>
+      m_metrics; // diskIOPS, missRatio, throughput
 
   std::shared_timed_mutex m_activePoolsMutex;
   std::unordered_set<PoolId> m_activePools;
@@ -85,7 +80,10 @@ class CacheAllocator : public ::facebook::cachelib::CacheAllocator<CacheTrait>,
 
   WriteHandle insertOrReplace(const WriteHandle& handle);
 
-  void registerMetrics(PoolId poolId, uint32_t diskIOPS, double missRatio);
+  void registerMetrics(PoolId poolId,
+                       uint32_t diskIOPS,
+                       double missRatio,
+                       uint32_t throughput);
 
   void removePool(PoolId id);
 };

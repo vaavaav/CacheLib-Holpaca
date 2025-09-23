@@ -109,13 +109,19 @@ grpc::Status CacheAllocator<CacheTrait>::GetStatus(
       {
         poolStatus.set_diskiops([this, poolId]() {
           // std::shared_lock<std::shared_timed_mutex> lock(m_metricsMutex);
-          return m_metrics[poolId].first;
+          return std::get<0>(m_metrics[poolId]);
         }());
       }
       {
         poolStatus.set_missratio([this, poolId]() {
           // std::shared_lock<std::shared_timed_mutex> lock(m_metricsMutex);
-          return m_metrics[poolId].second;
+          return std::get<1>(m_metrics[poolId]);
+        }());
+      }
+      {
+        poolStatus.set_throughput([this, poolId]() {
+          // std::shared_lock<std::shared_timed_mutex> lock(m_metricsMutex);
+          return std::get<2>(m_metrics[poolId]);
         }());
       }
       {
@@ -158,17 +164,13 @@ PoolId CacheAllocator<CacheTrait>::addPool(std::string name,
     m_qosLevels[poolId] = qosLevel;
   }
   {
-    std::unique_lock<std::shared_timed_mutex> lock(m_externalSizeMutex);
-    m_externalSize[poolId] = {};
-  }
-  {
     std::unique_lock<std::shared_timed_mutex> lock(m_shardsMutex);
     m_shards[poolId] = std::shared_ptr<Shards>(Shards::fixedSize(
         0.001, this->getCacheMemoryStats().ramCacheSize, 100));
   }
   {
     std::unique_lock<std::shared_timed_mutex> lock(m_metricsMutex);
-    m_metrics[poolId] = {0, 1.0}; // diskIOPS, missRatio
+    m_metrics[poolId] = {0, 1.0, 0}; // diskIOPS, missRatio, throughput
   }
   {
     std::unique_lock<std::shared_timed_mutex> lock(m_proportionsMutex);
@@ -238,9 +240,10 @@ CacheAllocator<CacheTrait>::insertOrReplace(
 template <typename CacheTrait>
 void CacheAllocator<CacheTrait>::registerMetrics(PoolId poolId,
                                                  uint32_t diskIOPS,
-                                                 double missRatio) {
+                                                 double missRatio,
+                                                 uint32_t throughput) {
   std::unique_lock<std::shared_timed_mutex> lock(m_metricsMutex);
-  m_metrics[poolId] = {diskIOPS, missRatio};
+  m_metrics[poolId] = {diskIOPS, missRatio, throughput};
 }
 
 template <typename CacheTrait>
