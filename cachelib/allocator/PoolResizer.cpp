@@ -92,13 +92,6 @@ void PoolResizer::work() {
             static_cast<int>(poolId), static_cast<int>(classId), e.what());
       }
     }
-    if (slabsReleased_ > 0) {
-      auto releasedMem = slabsReleased_ * Slab::kSize;
-      cache_.debugLogFile_ << "[PoolResizer] Released " << slabsReleased_
-                           << " slabs (mem=" << (slabsReleased_ * Slab::kSize)
-                           << ") for pool " << static_cast<int>(poolId)
-                           << std::endl;
-    }
   }
 
   // compact cache resizing is heavy weight and involves resharding. do that
