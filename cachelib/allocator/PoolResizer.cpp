@@ -37,14 +37,19 @@ PoolResizer::PoolResizer(CacheBase& cache,
 PoolResizer::~PoolResizer() { stop(std::chrono::seconds(0)); }
 
 void PoolResizer::work() {
-  const auto pools = cache_.getRegularPoolIdsForResize();
+  // const auto pools = cache_.getRegularPoolIdsForResize();
+  const auto pools = cache_.getRegularPoolIds(); // holpaca
+
   for (auto poolId : pools) {
     const PoolStats poolStats = cache_.getPoolStats(poolId);
+    auto& pool = cache_.getPool(poolId);
     for (unsigned int i = 0; i < numSlabsPerIteration_; i++) {
       // check if the pool still needs resizing after each iteration.
+
       if (!cache_.getPool(poolId).overLimit()) {
         continue;
       }
+
       // if user had supplied a rebalance stategy for the pool,
       // use that to downsize it
       auto strategy = cache_.getResizeStrategy(poolId);
@@ -86,6 +91,13 @@ void PoolResizer::work() {
             "Error trying to resize pool {} for allocation class {}. Error: {}",
             static_cast<int>(poolId), static_cast<int>(classId), e.what());
       }
+    }
+    if (slabsReleased_ > 0) {
+      auto releasedMem = slabsReleased_ * Slab::kSize;
+      cache_.debugLogFile_ << "[PoolResizer] Released " << slabsReleased_
+                           << " slabs (mem=" << (slabsReleased_ * Slab::kSize)
+                           << ") for pool " << static_cast<int>(poolId)
+                           << std::endl;
     }
   }
 
