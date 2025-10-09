@@ -231,7 +231,7 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
           ss << " !NEW! ";
         }
         ss << "C[" << cacheId << "] P[" << static_cast<uint32_t>(poolId)
-           << "]: " << newPoolSizePerCache[cacheId][poolId] << " -> "
+           << "]: " << poolStatus.m_maxSize << " -> "
            << newPoolSizePerCache[cacheId][poolId];
         if (poolStatus.m_MRC.size() >= m_kMRCMinLength) {
           ss << " ["
