@@ -104,7 +104,7 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
         newPools * static_cast<double>(totalSize) / pools);
 
     double const kAdjustmentFactor =
-        pools == 0 ? 1.0 : 1.0 - static_cast<double>(newPools) / pools;
+        (totalSize - kUsedSpaceWithNewPools) / static_cast<double>(usedSpace);
 
     double const kAdjustmentDelta =
         static_cast<double>(totalSize - kUsedSpaceWithNewPools -
@@ -133,7 +133,8 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
           std::vector<double> cacheSizes;
           std::vector<double> metrics;
           auto const kSize = newPoolSizePerCache[cacheId][poolId];
-          uint64_t lowerBound = (1.0 - m_kDelta) * kSize;
+          uint64_t lowerBound = static_cast<uint64_t>(
+              std::max(0.0, kSize - (totalSize * m_kDelta)));
           auto const kAvgMissRatio =
               m_poolAvgMetricsHistory[cacheId][poolId].m_missRatio;
 
@@ -176,8 +177,9 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
             }
             spline = tk::spline(cacheSizes, metrics,
                                 tk::spline::cspline_hermite, true);
+
             double const kAdjustment =
-                kAvgThroughput - spline(poolStatus.m_usedSize);
+                (-kAvgThroughput) - spline(poolStatus.m_usedSize);
 
             for (auto& metric : metrics) {
               metric += kAdjustment;
@@ -197,7 +199,8 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
           auto poolConfig = PoolConfig{
               .m_optimalSize = kSize,
               .m_lowerBound = lowerBound,
-              .m_upperBound = static_cast<uint64_t>(kSize * (1 + m_kDelta)),
+              .m_upperBound =
+                  static_cast<uint64_t>(kSize + (totalSize * m_kDelta)),
               .m_utilityCurve = std::move(spline),
           };
           poolConfigs.emplace(poolId, poolConfig);
