@@ -158,7 +158,8 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
             spline = tk::spline(cacheSizes, metrics,
                                 tk::spline::cspline_hermite, true);
             if (0.0 < poolStatus.m_qosLevel &&
-                poolStatus.m_qosLevel > 1 - kAvgMissRatio) {
+                poolStatus.m_qosLevel * (1 + m_kQoSMargin) >
+                    1 - kAvgMissRatio) {
               lowerBound = kSize;
             }
 
@@ -189,7 +190,7 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
                                 tk::spline::cspline_hermite, true);
 
             if (0.0 < poolStatus.m_qosLevel &&
-                poolStatus.m_qosLevel > kAvgThroughput) {
+                poolStatus.m_qosLevel * (1 + m_kQoSMargin) > kAvgThroughput) {
               lowerBound = kSize;
             }
           }

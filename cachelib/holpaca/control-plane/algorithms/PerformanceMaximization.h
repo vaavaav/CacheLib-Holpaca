@@ -55,6 +55,8 @@ class PerformanceMaximization : public ControlAlgorithm {
   double const m_kDelta{0.05};
   // Minimum length of MRC to consider the pool for optimization
   const uint32_t m_kMRCMinLength{3};
+  // Margin for QoS
+  double const m_kQoSMargin{0.10};
 
   bool const m_kPrintLatencies{false};
 
