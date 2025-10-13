@@ -95,20 +95,22 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
           usedSpace += poolStatus.m_usedSize;
         } else {
           newPoolSizePerCache[cacheId][poolId] =
-              static_cast<uint64_t>(static_cast<double>(totalSize) / pools);
+              totalSize / static_cast<double>(pools);
         }
       }
     }
 
-    uint64_t const kUsedSpaceWithNewPools = static_cast<uint64_t>(
-        newPools * static_cast<double>(totalSize) / pools);
+    uint64_t const kUsedSpaceWithNewPools =
+        newPools *
+        static_cast<uint64_t>(totalSize / static_cast<double>(pools));
 
     double const kAdjustmentFactor =
         (totalSize - kUsedSpaceWithNewPools) / static_cast<double>(usedSpace);
 
     double const kAdjustmentDelta =
-        static_cast<double>(totalSize - kUsedSpaceWithNewPools -
-                            kAdjustmentFactor * usedSpace) /
+        (static_cast<double>(totalSize) -
+         static_cast<double>(kUsedSpaceWithNewPools) -
+         kAdjustmentFactor * usedSpace) /
         (pools - newPools);
 
     for (const auto& [cacheId, cacheStatus] : allCacheStatus) {
@@ -228,6 +230,13 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
     /*
     std::stringstream ss;
     ss << "TotalSize: " << totalSize << std::endl;
+    uint64_t totalActualCapacity = 0;
+    for (const auto& [cacheId, cacheStatus] : allCacheStatus) {
+      for (const auto& [poolId, poolStatus] : cacheStatus.m_pools) {
+        totalActualCapacity += poolStatus.m_maxSize;
+      }
+    }
+    ss << "Total actual capacity: " << totalActualCapacity << std::endl;
     for (auto const& [cacheId, cacheStatus] : allCacheStatus) {
       ss << "C[" << cacheId << "]: " << cacheStatus.m_maxSize << std::endl;
       for (auto const& [poolId, poolStatus] : cacheStatus.m_pools) {
@@ -327,6 +336,7 @@ void PerformanceMaximization::Context::step() {
   auto& [pool2Id, pool2] = getNth(cache2.m_poolConfigs, poolIdx2);
 
   // Trade a random amount of space (limited by the lower and upper bounds)
+
   int const kMaxDelta = std::min({pool1.m_optimalSize - pool1.m_lowerBound,
                                   pool2.m_upperBound - pool2.m_optimalSize});
 
