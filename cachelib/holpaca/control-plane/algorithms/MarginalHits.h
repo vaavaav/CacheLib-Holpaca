@@ -21,11 +21,17 @@ class MarginalHits : public ControlAlgorithm {
   std::unordered_map<PoolId, uint32_t> m_score;
   std::unordered_map<PoolId, double> m_smoothedRanks;
 
+  std::vector<std::tuple<std::chrono::duration<double, std::milli>,
+                         std::chrono::duration<double, std::milli>,
+                         std::chrono::duration<double, std::milli>>>
+      m_stats;
+
   void loop(ProxyManager* const kProxyManager) override final;
 
  public:
   MarginalHits(ProxyManager* const kProxyManager,
-               std::chrono::milliseconds const kPeriodicity);
+               std::chrono::milliseconds const kPeriodicity,
+               uint32_t const kStats = false);
 };
 
 } // namespace holpaca
