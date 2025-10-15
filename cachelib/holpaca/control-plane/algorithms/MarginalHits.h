@@ -33,7 +33,7 @@ class MarginalHits : public ControlAlgorithm {
  public:
   MarginalHits(ProxyManager* const kProxyManager,
                std::chrono::milliseconds const kPeriodicity,
-               uint32_t const kStats = false);
+               uint32_t const kStats = 0);
 };
 
 } // namespace holpaca

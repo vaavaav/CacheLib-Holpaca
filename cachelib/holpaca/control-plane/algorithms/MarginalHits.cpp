@@ -106,7 +106,7 @@ void MarginalHits::loop(ProxyManager* const kProxyManager) {
     }
   }
 
-  if (m_stats.size() < m_statsToPrint) {
+  if (m_stats.size() < m_statsToPrint && enforce.count() > 0) {
     m_stats.push_back({collect, compute, enforce});
   }
   if (m_stats.size() == m_statsToPrint && m_statsToPrint > 0) {

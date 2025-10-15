@@ -40,29 +40,6 @@ Controller::getStatus() {
     }
   }
 
-  // print
-  /*
-  for (const auto& [cacheId, status] : cacheStatus) {
-    std::cout << "Cache: " << cacheId << ", Max Size: " << status.m_maxSize
-              << std::endl;
-    for (const auto& [poolId, poolStatus] : status.m_pools) {
-      std::cout << "  Pool: " << poolId
-                << ", Max Size: " << poolStatus.m_maxSize
-                << ", Used Size: " << poolStatus.m_usedSize
-                << ", Disk IOPS: " << poolStatus.m_diskIOPS
-                << ", Evictions: " << poolStatus.m_evictions
-                << ", Active: " << (poolStatus.m_isActive ? "Yes" : "No")
-                << std::endl;
-
-      for (const auto& [externalCache, extSize] : poolStatus.m_externalSize) {
-        std::cout << "      External Cache: " << externalCache
-                  << ", Size: " << extSize << std::endl;
-      }
-    }
-    std::cout << std::endl;
-  }
-  */
-
   return cacheStatus;
 }
 
@@ -100,7 +77,7 @@ grpc::Status Controller::Connect(grpc::ServerContext* context,
   m_proxies[request->cacheaddress()] =
       ::holpaca::Stage::NewStub(grpc::CreateChannel(
           request->cacheaddress(), grpc::InsecureChannelCredentials()));
-  std::cout << "Connected to " << request->cacheaddress() << std::endl;
+  //  std::cout << "Connected to " << request->cacheaddress() << std::endl;
 
   return grpc::Status::OK;
 }
@@ -109,7 +86,7 @@ grpc::Status Controller::Disconnect(grpc::ServerContext* context,
                                     const ::holpaca::DisconnectRequest* request,
                                     ::holpaca::DisconnectResponse* response) {
   std::unique_lock<std::shared_timed_mutex> lock(m_proxiesMutex);
-  std::cout << "Disconnected from " << request->cacheaddress() << std::endl;
+  // std::cout << "Disconnected from " << request->cacheaddress() << std::endl;
   m_proxies.erase(request->cacheaddress());
   return grpc::Status::OK;
 }
