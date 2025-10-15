@@ -26,6 +26,8 @@ class MarginalHits : public ControlAlgorithm {
                          std::chrono::duration<double, std::milli>>>
       m_stats;
 
+  uint32_t m_statsToPrint{0};
+
   void loop(ProxyManager* const kProxyManager) override final;
 
  public:

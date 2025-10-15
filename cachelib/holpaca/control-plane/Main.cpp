@@ -97,12 +97,14 @@ int main(int argc, char** argv) {
           args.size() > 2 && args[2] == "true");
     } else if (std::string(argv[i]) == "MarginalHits") {
       if (args.size() < 1) {
-        std::cerr << "MarginalHits requires 2 argument: <periodicity (ms)> [#stats]"
-                  << std::endl;
+        std::cerr
+            << "MarginalHits requires 2 argument: <periodicity (ms)> [#stats]"
+            << std::endl;
         return 1;
       }
       controller.addAlgorithm<MarginalHits>(
-          std::chrono::milliseconds(std::stoul(args[0])), args.size() > 1 ? std::stoul(args[1]) : 0);
+          std::chrono::milliseconds(std::stoul(args[0])),
+          args.size() > 1 ? std::stoul(args[1]) : 0);
     } else if (std::string(argv[i]) == "Motivation") {
       if (args.size() < 1) {
         std::cerr << "Motivation requires 1 argument: <periodicity (ms)>"

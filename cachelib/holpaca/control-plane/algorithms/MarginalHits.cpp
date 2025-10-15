@@ -6,10 +6,11 @@ namespace holpaca {
 
 MarginalHits::MarginalHits(ProxyManager* const kProxyManager,
                            std::chrono::milliseconds const kPeriodicity,
-                            uint32_t const kStats)
+                           uint32_t const kStats)
     : ControlAlgorithm(kProxyManager, kPeriodicity) {
-      m_stats.reserve(kStats);
-    }
+  m_stats.reserve(kStats);
+  m_statsToPrint = kStats;
+}
 
 void MarginalHits::loop(ProxyManager* const kProxyManager) {
   std::chrono::duration<double, std::milli> collect =
@@ -105,16 +106,17 @@ void MarginalHits::loop(ProxyManager* const kProxyManager) {
     }
   }
 
-  if (m_stats.size() < m_stats.capacity()) {
+  if (m_stats.size() < m_statsToPrint) {
     m_stats.push_back({collect, compute, enforce});
   }
-  if (m_stats.size() == m_stats.capacity()) {
+  if (m_stats.size() == m_statsToPrint && m_statsToPrint > 0) {
     for (auto const& [c, cm, e] : m_stats) {
       std::cout << c.count() << "," << cm.count() << "," << e.count()
                 << std::endl;
     }
     m_stats.clear();
     m_stats.resize(0);
+    m_statsToPrint = 0;
   }
 
   // clear the data structures
