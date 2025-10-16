@@ -1,5 +1,7 @@
 #include <cachelib/holpaca/control-plane/algorithms/MarginalHits.h>
 
+#include <iomanip>
+
 namespace facebook {
 namespace cachelib {
 namespace holpaca {
@@ -106,10 +108,12 @@ void MarginalHits::loop(ProxyManager* const kProxyManager) {
     }
   }
 
-  if (m_stats.size() < m_statsToPrint && enforce.count() > 0) {
+  if (m_stats.size() < m_statsToPrint &&
+      enforce > std::chrono::milliseconds(0)) {
     m_stats.push_back({collect, compute, enforce});
   }
   if (m_stats.size() == m_statsToPrint && m_statsToPrint > 0) {
+    std::cout << std::fixed << std::setprecision(9);
     for (auto const& [c, cm, e] : m_stats) {
       std::cout << c.count() << "," << cm.count() << "," << e.count()
                 << std::endl;
