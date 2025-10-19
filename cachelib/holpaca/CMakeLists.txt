@@ -75,8 +75,6 @@ add_executable(cachelib_holpaca_controller
   ./control-plane/algorithms/ControlAlgorithm.h
   ./control-plane/algorithms/PerformanceMaximization.h
   ./control-plane/algorithms/PerformanceMaximization.cpp
-  ./control-plane/algorithms/MarginalHits.h
-  ./control-plane/algorithms/MarginalHits.cpp
   ./control-plane/algorithms/Motivation.h
   ./control-plane/algorithms/Motivation.cpp
 )
