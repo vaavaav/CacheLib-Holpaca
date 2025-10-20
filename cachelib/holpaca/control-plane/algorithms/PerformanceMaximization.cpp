@@ -313,7 +313,8 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
   }
 
   if (m_printLatenciesOnEntries > 0 &&
-      m_latencies.size() < m_printLatenciesOnEntries && enforce.count() > 0) {
+      m_latencies.size() < m_printLatenciesOnEntries &&
+      cacheResizes.size() > 0) {
     m_latencies.emplace_back(collect, compute, enforce);
   }
   if (m_latencies.size() == m_printLatenciesOnEntries &&
