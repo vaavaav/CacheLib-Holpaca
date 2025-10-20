@@ -58,7 +58,13 @@ class PerformanceMaximization : public ControlAlgorithm {
   // Margin for QoS
   double const m_kQoSMargin{0.10};
 
-  bool const m_kPrintLatencies{false};
+  bool const m_kFakeEnforce{false};
+  uint64_t m_printLatenciesOnEntries{0};
+
+  std::vector<std::tuple<std::chrono::duration<double, std::milli>,
+                         std::chrono::duration<double, std::milli>,
+                         std::chrono::duration<double, std::milli>>>
+      m_latencies;
 
   struct PoolAvgMetrics {
     double m_missRatio{1.0};
@@ -78,7 +84,8 @@ class PerformanceMaximization : public ControlAlgorithm {
                           std::chrono::milliseconds const kPeriodicity,
                           MetricType const kMetricType,
                           double const kDelta,
-                          bool printLatencies = false);
+                          bool const kFakeEnforce,
+                          uint64_t const kPrintLatenciesOnEntries);
 };
 
 } // namespace holpaca
