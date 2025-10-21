@@ -198,12 +198,8 @@ bool CacheAllocator<CacheTrait>::insert(
     auto key = handle->getKey();
     std::string keyStr(key.data(), key.size());
     auto size = handle->getSize();
-    if (m_shards.find(pid) != m_shards.end()) {
-      std::cout << "Feeding key " << keyStr << " of size " << size
-                << " to shard for pool " << pid << std::endl;
-      m_shards[pid]->erase(keyStr);
-      m_shards[pid]->feed(keyStr, size);
-    }
+    m_shards[pid]->erase(keyStr);
+    m_shards[pid]->feed(keyStr, size);
   }
   return success;
 }
