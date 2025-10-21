@@ -161,6 +161,7 @@ PoolId CacheAllocator<CacheTrait>::addPool(std::string name,
                                               // space for the pool
   m_shards[poolId] = std::shared_ptr<Shards>(
       Shards::fixedSize(0.001, this->getCacheMemoryStats().ramCacheSize, 100));
+  std::cout << "Created Shards for pool " << poolId << std::endl;
   m_qosLevels[poolId] = qosLevel;
   m_metrics[poolId] = {0, 1.0, 0}; // diskIOPS, missRatio, throughput
   m_proportions[poolId] = proportion;
@@ -198,7 +199,9 @@ bool CacheAllocator<CacheTrait>::insert(
     auto key = handle->getKey();
     std::string keyStr(key.data(), key.size());
     auto size = handle->getSize();
+    std::cout << "Before access to Shards for pool " << pid << std::endl;
     m_shards[pid]->erase(keyStr);
+    std::cout << "After erase from Shards for pool " << pid << std::endl;
     m_shards[pid]->feed(keyStr, size);
   }
   return success;
