@@ -48,10 +48,12 @@ void Controller::resize(
   std::unique_lock<std::shared_timed_mutex> lock(m_proxiesMutex);
 
   if (cacheResize.size() != m_proxies.size()) {
+    /*
     std::cerr << "Controller: Mismatch in number of proxies and resize "
                  "requests. Expected "
               << m_proxies.size() << " but got " << cacheResize.size()
               << ". Aborting resize." << std::endl;
+              */
     return;
   }
 
@@ -77,7 +79,7 @@ grpc::Status Controller::Connect(grpc::ServerContext* context,
   m_proxies[request->cacheaddress()] =
       ::holpaca::Stage::NewStub(grpc::CreateChannel(
           request->cacheaddress(), grpc::InsecureChannelCredentials()));
-  std::cout << "Connected to " << request->cacheaddress() << std::endl;
+  //  std::cout << "Connected to " << request->cacheaddress() << std::endl;
 
   return grpc::Status::OK;
 }
@@ -86,7 +88,7 @@ grpc::Status Controller::Disconnect(grpc::ServerContext* context,
                                     const ::holpaca::DisconnectRequest* request,
                                     ::holpaca::DisconnectResponse* response) {
   std::unique_lock<std::shared_timed_mutex> lock(m_proxiesMutex);
-  std::cout << "Disconnected from " << request->cacheaddress() << std::endl;
+  // std::cout << "Disconnected from " << request->cacheaddress() << std::endl;
   m_proxies.erase(request->cacheaddress());
   return grpc::Status::OK;
 }
