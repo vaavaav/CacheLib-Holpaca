@@ -188,8 +188,6 @@ CacheAllocator<CacheTrait>::find(typename CacheAllocator<CacheTrait>::Key key) {
     std::string keyStr(key.data(), key.size());
     auto size = handle->getSize();
     std::stringstream ss;
-    ss << "Before access (find) to Shards for pool " << static_cast<int>(poolId)
-       << std::endl;
     std::cout << ss.str();
     m_shards[poolId]->feed(keyStr, size);
   }
@@ -209,12 +207,11 @@ bool CacheAllocator<CacheTrait>::insert(
     auto size = handle->getSize();
     std::stringstream ss;
     ss << "Before access (insert) to Shards for pool " << static_cast<int>(pid)
-       << std::endl;
+       << " (" << static_cast<void*>(&m_shards) << ", "
+       << static_cast<void*>(m_shards[pid].get()) << ")" << std::endl;
     std::cout << ss.str();
     m_shards[pid]->erase(keyStr);
     m_shards[pid]->feed(keyStr, size);
-    ss << "After access (insert) to Shards for pool " << static_cast<int>(pid)
-       << std::endl;
     std::cout << ss.str();
   }
   return success;
@@ -233,13 +230,9 @@ CacheAllocator<CacheTrait>::insertOrReplace(
     std::string keyStr(key.data(), key.size());
     auto size = handle->getSize();
     std::stringstream ss;
-    ss << "Before access (insertOrReplace) to Shards for pool "
-       << static_cast<int>(pid) << std::endl;
     std::cout << ss.str();
     m_shards[pid]->erase(keyStr);
     m_shards[pid]->feed(keyStr, size);
-    ss << "After access (insertOrReplace) to Shards for pool "
-       << static_cast<int>(pid) << std::endl;
     std::cout << ss.str();
   }
   return oldHandle;
