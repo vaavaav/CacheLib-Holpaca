@@ -34,6 +34,7 @@ PerformanceMaximization::PerformanceMaximization(
 void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
   std::unordered_map<std::string, ProxyManager::CacheStatus> allCacheStatus;
   std::vector<ProxyManager::CacheResize> cacheResizes;
+  bool atLeastOnePoolActive = false;
   std::chrono::duration<double, std::milli> collect =
                                                 std::chrono::milliseconds(0),
                                             compute =
@@ -98,6 +99,7 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
       for (const auto& [poolId, poolStatus] : cacheStatus.m_pools) {
         if (poolStatus.m_MRC.size() >= m_kMRCMinLength) {
           usedSpace += poolStatus.m_usedSize;
+          atLeastOnePoolActive = true;
         } else {
           newPoolSizePerCache[cacheId][poolId] =
               totalSize / static_cast<double>(pools);
@@ -313,8 +315,9 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
   }
 
   if (m_printLatenciesOnEntries > 0 &&
-      m_latencies.size() < m_printLatenciesOnEntries &&
-      allCacheStatus.size() > 0) {
+      m_latencies.size() < m_printLatenciesOnEntries && atLeastOnePoolActive
+
+  ) {
     m_latencies.emplace_back(collect, compute, enforce);
   }
   if (m_latencies.size() == m_printLatenciesOnEntries &&
@@ -325,7 +328,7 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
     }
     m_printLatenciesOnEntries = 0; // disable further printing
   }
-}
+} // namespace holpaca
 
 bool PerformanceMaximization::Context::skip() const {
   return std::accumulate(m_cacheConfigs.begin(), m_cacheConfigs.end(), 0,
