@@ -159,23 +159,11 @@ PoolId CacheAllocator<CacheTrait>::addPool(std::string name,
                                            double proportion) {
   PoolId poolId = Super::addPool(name, size); // blocks until there is enough
                                               // space for the pool
-  {
-    std::unique_lock<std::shared_timed_mutex> lock(m_qosLevelsMutex);
-    m_qosLevels[poolId] = qosLevel;
-  }
-  {
-    std::unique_lock<std::shared_timed_mutex> lock(m_shardsMutex);
-    m_shards[poolId] = std::shared_ptr<Shards>(Shards::fixedSize(
-        0.001, this->getCacheMemoryStats().ramCacheSize, 100));
-  }
-  {
-    std::unique_lock<std::shared_timed_mutex> lock(m_metricsMutex);
-    m_metrics[poolId] = {0, 1.0, 0}; // diskIOPS, missRatio, throughput
-  }
-  {
-    std::unique_lock<std::shared_timed_mutex> lock(m_proportionsMutex);
-    m_proportions[poolId] = proportion;
-  }
+  m_shards[poolId] = std::shared_ptr<Shards>(
+      Shards::fixedSize(0.001, this->getCacheMemoryStats().ramCacheSize, 100));
+  m_qosLevels[poolId] = qosLevel;
+  m_metrics[poolId] = {0, 1.0, 0}; // diskIOPS, missRatio, throughput
+  m_proportions[poolId] = proportion;
   {
     std::unique_lock<std::shared_timed_mutex> lock(m_activePoolsMutex);
     m_activePools.insert(poolId);
@@ -210,8 +198,12 @@ bool CacheAllocator<CacheTrait>::insert(
     auto key = handle->getKey();
     std::string keyStr(key.data(), key.size());
     auto size = handle->getSize();
-    m_shards[pid]->erase(keyStr);
-    m_shards[pid]->feed(keyStr, size);
+    if (m_shards.find(pid) != m_shards.end()) {
+      std::cout << "Feeding key " << keyStr << " of size " << size
+                << " to shard for pool " << pid << std::endl;
+      m_shards[pid]->erase(keyStr);
+      m_shards[pid]->feed(keyStr, size);
+    }
   }
   return success;
 }
