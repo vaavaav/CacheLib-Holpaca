@@ -161,7 +161,8 @@ PoolId CacheAllocator<CacheTrait>::addPool(std::string name,
                                               // space for the pool
   m_shards[poolId] = std::shared_ptr<Shards>(
       Shards::fixedSize(0.001, this->getCacheMemoryStats().ramCacheSize, 100));
-  std::cout << "Created Shards for pool " << poolId << std::endl;
+  std::cout << "Created Shards for pool " << static_cast<int>(poolId)
+            << std::endl;
   m_qosLevels[poolId] = qosLevel;
   m_metrics[poolId] = {0, 1.0, 0}; // diskIOPS, missRatio, throughput
   m_proportions[poolId] = proportion;
@@ -183,6 +184,8 @@ CacheAllocator<CacheTrait>::find(typename CacheAllocator<CacheTrait>::Key key) {
             .poolId;
     std::string keyStr(key.data(), key.size());
     auto size = handle->getSize();
+    std::cout << "Before access (read) to Shards for pool "
+              << static_cast<int>(poolId) << std::endl;
     m_shards[poolId]->feed(keyStr, size);
   }
   return handle;
@@ -199,10 +202,12 @@ bool CacheAllocator<CacheTrait>::insert(
     auto key = handle->getKey();
     std::string keyStr(key.data(), key.size());
     auto size = handle->getSize();
-    std::cout << "Before access to Shards for pool " << pid << std::endl;
+    std::cout << "Before access (insert) to Shards for pool "
+              << static_cast<int>(pid) << std::endl;
     m_shards[pid]->erase(keyStr);
-    std::cout << "After erase from Shards for pool " << pid << std::endl;
     m_shards[pid]->feed(keyStr, size);
+    std::cout << "After access (insert) to Shards for pool "
+              << static_cast<int>(pid) << std::endl;
   }
   return success;
 }
@@ -219,8 +224,12 @@ CacheAllocator<CacheTrait>::insertOrReplace(
     auto key = handle->getKey();
     std::string keyStr(key.data(), key.size());
     auto size = handle->getSize();
+    std::cout << "Before access (insertOrReplace) to Shards for pool "
+              << static_cast<int>(pid) << std::endl;
     m_shards[pid]->erase(keyStr);
     m_shards[pid]->feed(keyStr, size);
+    std::cout << "After access (insertOrReplace) to Shards for pool "
+              << static_cast<int>(pid) << std::endl;
   }
   return oldHandle;
 }
