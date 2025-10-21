@@ -1,8 +1,6 @@
 #include <cachelib/holpaca/data-plane/CacheAllocator.h>
 #include <grpcpp/create_channel.h>
 
-#include <sstream>
-
 namespace facebook {
 namespace cachelib {
 namespace holpaca {
@@ -164,9 +162,6 @@ PoolId CacheAllocator<CacheTrait>::addPool(std::string name,
                                               // space for the pool
   m_shards[poolId] = std::shared_ptr<Shards>(
       Shards::fixedSize(0.001, this->getCacheMemoryStats().ramCacheSize, 100));
-  std::stringstream ss;
-  ss << "Created Shards for pool " << static_cast<int>(poolId) << std::endl;
-  std::cout << ss.str();
   m_qosLevels[poolId] = qosLevel;
   m_metrics[poolId] = {0, 1.0, 0}; // diskIOPS, missRatio, throughput
   m_proportions[poolId] = proportion;
@@ -188,8 +183,6 @@ CacheAllocator<CacheTrait>::find(typename CacheAllocator<CacheTrait>::Key key) {
             .poolId;
     std::string keyStr(key.data(), key.size());
     auto size = handle->getSize();
-    std::stringstream ss;
-    std::cout << ss.str();
     m_shards[poolId]->feed(keyStr, size);
   }
   return handle;
@@ -206,11 +199,8 @@ bool CacheAllocator<CacheTrait>::insert(
     auto key = handle->getKey();
     std::string keyStr(key.data(), key.size());
     auto size = handle->getSize();
-    std::stringstream ss;
-    std::cout << ss.str();
     m_shards[pid]->erase(keyStr);
     m_shards[pid]->feed(keyStr, size);
-    std::cout << ss.str();
   }
   return success;
 }
@@ -227,11 +217,8 @@ CacheAllocator<CacheTrait>::insertOrReplace(
     auto key = handle->getKey();
     std::string keyStr(key.data(), key.size());
     auto size = handle->getSize();
-    std::stringstream ss;
-    std::cout << ss.str();
     m_shards[pid]->erase(keyStr);
     m_shards[pid]->feed(keyStr, size);
-    std::cout << ss.str();
   }
   return oldHandle;
 }
