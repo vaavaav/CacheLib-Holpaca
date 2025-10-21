@@ -14,6 +14,7 @@ CacheAllocator<CacheTrait>::CacheAllocator(Config& config)
       m_kVirtualSize(config.m_hasVirtualSize ? config.m_virtualSize
                                              : config.size),
       m_kProportion(config.proportion) {
+  m_shards.reserve(64); // maximum tolerated number of pools by CacheLib
   if (!m_kAddress.empty() && !config.m_controllerAddress.empty()) {
     m_server =
         grpc::ServerBuilder()
@@ -206,9 +207,6 @@ bool CacheAllocator<CacheTrait>::insert(
     std::string keyStr(key.data(), key.size());
     auto size = handle->getSize();
     std::stringstream ss;
-    ss << "Before access (insert) to Shards for pool " << static_cast<int>(pid)
-       << " (" << static_cast<void*>(&m_shards) << ", "
-       << static_cast<void*>(m_shards[pid].get()) << ")" << std::endl;
     std::cout << ss.str();
     m_shards[pid]->erase(keyStr);
     m_shards[pid]->feed(keyStr, size);
