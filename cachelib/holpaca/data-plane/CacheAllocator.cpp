@@ -189,7 +189,6 @@ typename CacheAllocator<CacheTrait>::ReadHandle
 CacheAllocator<CacheTrait>::find(typename CacheAllocator<CacheTrait>::Key key) {
   auto handle = Super::find(key);
   if (handle) {
-    // std::unique_lock<std::shared_timed_mutex> lock(m_shardsMutex);
     auto poolId =
         Super::getAllocInfo(static_cast<const void*>(handle->getMemory()))
             .poolId;
@@ -211,7 +210,6 @@ bool CacheAllocator<CacheTrait>::insert(
     auto key = handle->getKey();
     std::string keyStr(key.data(), key.size());
     auto size = handle->getSize();
-    std::unique_lock<std::shared_timed_mutex> lock(m_shardsMutex);
     m_shards[pid]->erase(keyStr);
     m_shards[pid]->feed(keyStr, size);
   }
@@ -230,7 +228,6 @@ CacheAllocator<CacheTrait>::insertOrReplace(
     auto key = handle->getKey();
     std::string keyStr(key.data(), key.size());
     auto size = handle->getSize();
-    std::unique_lock<std::shared_timed_mutex> lock(m_shardsMutex);
     m_shards[pid]->erase(keyStr);
     m_shards[pid]->feed(keyStr, size);
   }
@@ -253,22 +250,6 @@ void CacheAllocator<CacheTrait>::removePool(PoolId id) {
     m_activePools.erase(id);
     Super::shrinkPool(id, Super::getPool(id).getPoolSize());
   }
-  //  {
-  //    std::unique_lock<std::shared_timed_mutex> lock(m_shardsMutex);
-  //    m_shards.erase(id);
-  //  }
-  //  {
-  //    std::unique_lock<std::shared_timed_mutex> lock(m_diskIOPSMutex);
-  //    m_diskIOPS.erase(id);
-  //  }
-  //  {
-  //    std::unique_lock<std::shared_timed_mutex> lock(m_qosLevelsMutex);
-  //    m_qosLevels.erase(id);
-  //  }
-  //  {
-  //    std::unique_lock<std::shared_timed_mutex> lock(m_proportionsMutex);
-  //    m_proportions.erase(id);
-  //  }
 }
 
 template class CacheAllocator<::facebook::cachelib::LruCacheTrait>;
