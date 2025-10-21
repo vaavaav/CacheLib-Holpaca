@@ -190,7 +190,7 @@ CacheAllocator<CacheTrait>::find(typename CacheAllocator<CacheTrait>::Key key) {
     std::stringstream ss;
     ss << "Before access (find) to Shards for pool " << static_cast<int>(poolId)
        << std::endl;
-    sstd::cout << ss.str();
+    std::cout << ss.str();
     m_shards[poolId]->feed(keyStr, size);
   }
   return handle;
