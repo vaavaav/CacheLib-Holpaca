@@ -12,7 +12,12 @@ CacheAllocator<CacheTrait>::CacheAllocator(Config& config)
       m_kVirtualSize(config.m_hasVirtualSize ? config.m_virtualSize
                                              : config.size),
       m_kProportion(config.proportion) {
-  m_shards.reserve(64); // maximum tolerated number of pools by CacheLib
+  // avoid reallocation during runtime
+  // maximum tolerated number of pools by CacheLib
+  m_shards.reserve(64);
+  m_activePools.reserve(64);
+  m_metrics.reserve(64);
+  //
   if (!m_kAddress.empty() && !config.m_controllerAddress.empty()) {
     m_server =
         grpc::ServerBuilder()
@@ -95,47 +100,32 @@ grpc::Status CacheAllocator<CacheTrait>::GetStatus(
 
   for (const auto& poolId : Super::getPoolIds()) {
     const auto& pool = Super::getPool(poolId);
-    bool const isActive = [&]() {
-      std::shared_lock<std::shared_timed_mutex> lock(m_activePoolsMutex);
-      return m_activePools.find(poolId) != m_activePools.end();
-    }();
+    bool const isActive = m_activePools.find(poolId) != m_activePools.end();
     if (isActive) {
       ::holpaca::PoolStatus poolStatus;
       // get MRC
       {
-        // std::shared_lock<std::shared_timed_mutex> lock(m_shardsMutex);
         auto const& mrc = m_shards[poolId]->mrc();
         *poolStatus.mutable_mrc() = {mrc.begin(), mrc.end()};
       }
       {
-        poolStatus.set_diskiops([this, poolId]() {
-          // std::shared_lock<std::shared_timed_mutex> lock(m_metricsMutex);
-          return std::get<0>(m_metrics[poolId]);
-        }());
+        poolStatus.set_diskiops(
+            [this, poolId]() { return std::get<0>(m_metrics[poolId]); }());
       }
       {
-        poolStatus.set_missratio([this, poolId]() {
-          // std::shared_lock<std::shared_timed_mutex> lock(m_metricsMutex);
-          return std::get<1>(m_metrics[poolId]);
-        }());
+        poolStatus.set_missratio(
+            [this, poolId]() { return std::get<1>(m_metrics[poolId]); }());
       }
       {
-        poolStatus.set_throughput([this, poolId]() {
-          // std::shared_lock<std::shared_timed_mutex> lock(m_metricsMutex);
-          return std::get<2>(m_metrics[poolId]);
-        }());
+        poolStatus.set_throughput(
+            [this, poolId]() { return std::get<2>(m_metrics[poolId]); }());
       }
       {
-        poolStatus.set_qos([this, poolId]() {
-          // std::shared_lock<std::shared_timed_mutex> lock(m_qosLevelsMutex);
-          return m_qosLevels[poolId];
-        }());
+        poolStatus.set_qos([this, poolId]() { return m_qosLevels[poolId]; }());
       }
       {
-        poolStatus.set_proportion([this, poolId]() {
-          // std::shared_lock<std::shared_timed_mutex> lock(m_proportionsMutex);
-          return m_proportions[poolId];
-        }());
+        poolStatus.set_proportion(
+            [this, poolId]() { return m_proportions[poolId]; }());
       }
       auto pstats = Super::getPoolStats(poolId);
       poolStatus.set_poolid(poolId);
@@ -165,10 +155,7 @@ PoolId CacheAllocator<CacheTrait>::addPool(std::string name,
   m_qosLevels[poolId] = qosLevel;
   m_metrics[poolId] = {0, 1.0, 0}; // diskIOPS, missRatio, throughput
   m_proportions[poolId] = proportion;
-  {
-    std::unique_lock<std::shared_timed_mutex> lock(m_activePoolsMutex);
-    m_activePools.insert(poolId);
-  }
+  m_activePools.insert(poolId);
 
   return poolId;
 }
@@ -228,17 +215,13 @@ void CacheAllocator<CacheTrait>::registerMetrics(PoolId poolId,
                                                  uint32_t diskIOPS,
                                                  double missRatio,
                                                  uint32_t throughput) {
-  std::unique_lock<std::shared_timed_mutex> lock(m_metricsMutex);
   m_metrics[poolId] = {diskIOPS, missRatio, throughput};
 }
 
 template <typename CacheTrait>
 void CacheAllocator<CacheTrait>::removePool(PoolId id) {
-  {
-    std::unique_lock<std::shared_timed_mutex> lock(m_activePoolsMutex);
-    m_activePools.erase(id);
-    Super::shrinkPool(id, Super::getPool(id).getPoolSize());
-  }
+  m_activePools.erase(id);
+  Super::shrinkPool(id, Super::getPool(id).getPoolSize());
 }
 
 template class CacheAllocator<::facebook::cachelib::LruCacheTrait>;

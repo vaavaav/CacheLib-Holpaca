@@ -9,7 +9,6 @@
 #include <grpcpp/server_builder.h>
 #include <grpcpp/server_context.h>
 
-#include <shared_mutex>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -39,20 +38,15 @@ class CacheAllocator : public ::facebook::cachelib::CacheAllocator<CacheTrait>,
 
   using Super = ::facebook::cachelib::CacheAllocator<CacheTrait>;
 
-  std::shared_timed_mutex m_shardsMutex;
   std::unordered_map<PoolId, std::shared_ptr<Shards>> m_shards;
 
-  std::shared_timed_mutex m_metricsMutex;
   std::unordered_map<PoolId, std::tuple<uint32_t, double, uint32_t>>
       m_metrics; // diskIOPS, missRatio, throughput
 
-  std::shared_timed_mutex m_activePoolsMutex;
   std::unordered_set<PoolId> m_activePools;
 
-  std::shared_timed_mutex m_qosLevelsMutex;
   std::unordered_map<PoolId, double> m_qosLevels;
 
-  std::shared_timed_mutex m_proportionsMutex;
   std::unordered_map<PoolId, double> m_proportions;
 
   uint64_t const m_kVirtualSize{0};
