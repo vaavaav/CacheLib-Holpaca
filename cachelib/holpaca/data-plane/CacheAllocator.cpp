@@ -17,6 +17,8 @@ CacheAllocator<CacheTrait>::CacheAllocator(Config& config)
   m_shards.reserve(64);
   m_activePools.reserve(64);
   m_metrics.reserve(64);
+  m_qosLevels.reserve(64);
+  m_proportions.reserve(64);
   //
   if (!m_kAddress.empty() && !config.m_controllerAddress.empty()) {
     m_server =
