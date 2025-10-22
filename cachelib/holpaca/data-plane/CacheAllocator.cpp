@@ -172,8 +172,9 @@ CacheAllocator<CacheTrait>::find(typename CacheAllocator<CacheTrait>::Key key) {
     auto const kPoolId =
         Super::getAllocInfo(static_cast<const void*>(handle->getMemory()))
             .poolId;
-    m_shards[PoolId]->feed(std::string(key.data(), key.size()),
-                           handle->getSize());
+    std::string keyStr(key.data(), key.size());
+    uint32_t size = handle->getSize();
+    m_shards[kPoolId]->feed(keyStr, size);
   }
   return handle;
 }
@@ -188,7 +189,7 @@ bool CacheAllocator<CacheTrait>::insert(
             .poolId;
     auto key = handle->getKey();
     std::string keyStr(key.data(), key.size());
-    auto size = handle->getSize();
+    uint32_t size = handle->getSize();
     m_shards[pid]->erase(keyStr);
     m_shards[pid]->feed(keyStr, size);
   }
@@ -206,7 +207,7 @@ CacheAllocator<CacheTrait>::insertOrReplace(
             .poolId;
     auto key = handle->getKey();
     std::string keyStr(key.data(), key.size());
-    auto size = handle->getSize();
+    uint32_t size = handle->getSize();
     m_shards[pid]->erase(keyStr);
     m_shards[pid]->feed(keyStr, size);
   }
