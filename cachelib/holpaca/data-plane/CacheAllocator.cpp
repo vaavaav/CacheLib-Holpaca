@@ -167,8 +167,6 @@ template <typename CacheTrait>
 typename CacheAllocator<CacheTrait>::ReadHandle
 CacheAllocator<CacheTrait>::find(typename CacheAllocator<CacheTrait>::Key key) {
   auto handle = Super::find(key);
-
-  /*
   if (handle) {
     auto const kPoolId =
         Super::getAllocInfo(static_cast<const void*>(handle->getMemory()))
@@ -176,7 +174,7 @@ CacheAllocator<CacheTrait>::find(typename CacheAllocator<CacheTrait>::Key key) {
     std::string keyStr(key.data(), key.size());
     uint32_t size = handle->getSize();
     m_shards[kPoolId]->feed(keyStr, size);
-  }*/
+  }
   return handle;
 }
 
@@ -184,7 +182,6 @@ template <typename CacheTrait>
 bool CacheAllocator<CacheTrait>::insert(
     const typename CacheAllocator<CacheTrait>::WriteHandle& handle) {
   bool const success = Super::insert(handle);
-  /*
   if (success) {
     PoolId pid =
         Super::getAllocInfo(static_cast<const void*>(handle->getMemory()))
@@ -194,7 +191,7 @@ bool CacheAllocator<CacheTrait>::insert(
     uint32_t size = handle->getSize();
     m_shards[pid]->erase(keyStr);
     m_shards[pid]->feed(keyStr, size);
-  }*/
+  }
   return success;
 }
 
@@ -203,7 +200,6 @@ typename CacheAllocator<CacheTrait>::WriteHandle
 CacheAllocator<CacheTrait>::insertOrReplace(
     const typename CacheAllocator<CacheTrait>::WriteHandle& handle) {
   auto oldHandle = Super::insertOrReplace(handle);
-  /*
   if (oldHandle) {
     PoolId pid =
         Super::getAllocInfo(static_cast<const void*>(handle->getMemory()))
@@ -213,7 +209,7 @@ CacheAllocator<CacheTrait>::insertOrReplace(
     uint32_t size = handle->getSize();
     m_shards[pid]->erase(keyStr);
     m_shards[pid]->feed(keyStr, size);
-  }*/
+  }
   return oldHandle;
 }
 
