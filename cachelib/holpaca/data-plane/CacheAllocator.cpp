@@ -52,9 +52,13 @@ grpc::Status CacheAllocator<CacheTrait>::Resize(
   std::vector<std::pair<PoolId, int64_t>> sortedRelSizes; // relSizes may
                                                           // be negative
   for (const auto& [poolId, poolsize] : request->poolsizes()) {
-    sortedRelSizes.push_back(
-        {static_cast<PoolId>(poolId),
-         poolsize.size() - Super::getPool(poolId).getPoolSize()});
+    auto const relSize =
+        static_cast<int64_t>(poolsize.size()) -
+        static_cast<int64_t>(Super::getPool(poolId).getPoolSize());
+    if (relSize == 0) {
+      continue;
+    }
+    sortedRelSizes.push_back({static_cast<PoolId>(poolId), relSize});
   }
 
   // resizing must be done in order from the most to least downsized pool
