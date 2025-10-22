@@ -54,13 +54,13 @@ grpc::Status CacheAllocator<CacheTrait>::Resize(
   std::vector<std::pair<PoolId, int64_t>> sortedRelSizes; // relSizes may
                                                           // be negative
   for (const auto& [poolId, poolsize] : request->poolsizes()) {
-    auto const relSize =
-        static_cast<int64_t>(poolsize.size()) -
-        static_cast<int64_t>(Super::getPool(poolId).getPoolSize());
-    if (relSize == 0) {
-      continue;
+    auto const originalSize = Super::getPool(poolId).getPoolSize();
+    if (poolsize.size() == originalSize) {
+      continue; // no resizing needed
     }
-    sortedRelSizes.push_back({static_cast<PoolId>(poolId), relSize});
+    sortedRelSizes.push_back(
+        {static_cast<PoolId>(poolId), static_cast<int64_t>(poolsize.size()) -
+                                          static_cast<int64_t>(originalSize)});
   }
 
   // resizing must be done in order from the most to least downsized pool
@@ -427,7 +427,7 @@ CacheAllocator<CacheTrait>::find(typename CacheAllocator<CacheTrait>::Key key) {
             .poolId;
     std::string keyStr(key.data(), key.size());
     auto size = handle->getSize();
-    // m_shards[poolId]->feed(keyStr, size);
+    m_shards[poolId]->feed(keyStr, size);
   }
   return handle;
 }
@@ -443,8 +443,8 @@ bool CacheAllocator<CacheTrait>::insert(
     auto key = handle->getKey();
     std::string keyStr(key.data(), key.size());
     auto size = handle->getSize();
-    // m_shards[pid]->erase(keyStr);
-    // m_shards[pid]->feed(keyStr, size);
+    m_shards[pid]->erase(keyStr);
+    m_shards[pid]->feed(keyStr, size);
   }
   return success;
 }
@@ -461,8 +461,8 @@ CacheAllocator<CacheTrait>::insertOrReplace(
     auto key = handle->getKey();
     std::string keyStr(key.data(), key.size());
     auto size = handle->getSize();
-    // m_shards[pid]->erase(keyStr);
-    // m_shards[pid]->feed(keyStr, size);
+    m_shards[pid]->erase(keyStr);
+    m_shards[pid]->feed(keyStr, size);
   }
   return oldHandle;
 }
