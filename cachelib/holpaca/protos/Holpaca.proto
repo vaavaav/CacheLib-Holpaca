@@ -35,11 +35,9 @@ message PoolStatus {
   uint32 diskIOPS = 4;
   uint32 throughput = 5;
   double missRatio = 6;
-  uint32 evictions = 7;
-  double qos = 8;
-  double proportion = 9;
-  map<int32, uint32> tailAccesses = 10;
-  map<uint64, double> mrc = 11;
+  double qos = 7;
+  double proportion = 8;
+  map<uint64, double> mrc = 9;
 };
 
 message CacheStatus {

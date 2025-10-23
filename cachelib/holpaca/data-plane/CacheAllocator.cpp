@@ -18,7 +18,7 @@ CacheAllocator<CacheTrait>::CacheAllocator(Config& config)
   m_metrics.reserve(64);
   m_qosLevels.reserve(64);
   m_proportions.reserve(64);
-  if (!m_kAddress.empty() && !config.m_controllerAddress.empty()) {
+  if (!m_kAddress.empty() || !config.m_controllerAddress.empty()) {
     m_server =
         grpc::ServerBuilder()
             .AddListeningPort(m_kAddress, grpc::InsecureServerCredentials())
@@ -49,8 +49,8 @@ grpc::Status CacheAllocator<CacheTrait>::Resize(
     const ::holpaca::ResizeRequest* request,
     ::holpaca::ResizeResponse* response) {
   // CacheLib provides a resize method based on relative (not absolute sizes)
-  std::vector<std::pair<PoolId, int64_t>> sortedRelSizes; // relSizes may
-                                                          // be negative
+  std::vector<std::pair<PoolId, int64_t>> sortedRelSizes{}; // relSizes may
+                                                            // be negative
   for (const auto& [poolId, poolsize] : request->poolsizes()) {
     auto const originalSize = Super::getPool(poolId).getPoolSize();
     if (poolsize.size() != originalSize) {
@@ -134,11 +134,6 @@ grpc::Status CacheAllocator<CacheTrait>::GetStatus(
       poolStatus.set_poolid(poolId);
       poolStatus.set_maxsize(pool.getPoolSize());
       poolStatus.set_usedsize(pool.getCurrentAllocSize());
-      poolStatus.set_evictions(pstats.numEvictions());
-      auto tailAccesses = poolStatus.mutable_tailaccesses();
-      for (const auto& [classId, stats] : pstats.cacheStats) {
-        (*tailAccesses)[classId] = stats.containerStat.numTailAccesses;
-      }
       (*pools)[poolId] = poolStatus;
     }
   }
@@ -167,6 +162,7 @@ template <typename CacheTrait>
 typename CacheAllocator<CacheTrait>::ReadHandle
 CacheAllocator<CacheTrait>::find(typename CacheAllocator<CacheTrait>::Key key) {
   auto handle = Super::find(key);
+
   if (handle) {
     auto const kPoolId =
         Super::getAllocInfo(static_cast<const void*>(handle->getMemory()))
@@ -175,6 +171,7 @@ CacheAllocator<CacheTrait>::find(typename CacheAllocator<CacheTrait>::Key key) {
     uint32_t size = handle->getSize();
     m_shards[kPoolId]->feed(keyStr, size);
   }
+
   return handle;
 }
 
@@ -182,6 +179,7 @@ template <typename CacheTrait>
 bool CacheAllocator<CacheTrait>::insert(
     const typename CacheAllocator<CacheTrait>::WriteHandle& handle) {
   bool const success = Super::insert(handle);
+
   if (success) {
     PoolId pid =
         Super::getAllocInfo(static_cast<const void*>(handle->getMemory()))

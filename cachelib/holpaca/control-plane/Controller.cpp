@@ -12,7 +12,7 @@ namespace holpaca {
 std::unordered_map<std::string, ProxyManager::CacheStatus>
 Controller::getStatus() {
   std::unordered_map<std::string, ProxyManager::CacheStatus> cacheStatus;
-  std::shared_lock<std::shared_timed_mutex> lock(m_proxiesMutex);
+  // std::shared_lock<std::shared_timed_mutex> lock(m_proxiesMutex);
   for (const auto& [peer, proxy] : m_proxies) {
     ::grpc::ClientContext context;
     ::holpaca::GetStatusRequest request;
@@ -30,12 +30,9 @@ Controller::getStatus() {
           .m_diskIOPS = ps.diskiops(),
           .m_throughput = ps.throughput(),
           .m_missRatio = ps.missratio(),
-          .m_evictions = ps.evictions(),
           .m_qosLevel = ps.qos(),
           .m_proportion = ps.proportion(),
           .m_MRC = {ps.mrc().begin(), ps.mrc().end()},
-          .m_tailAccesses = {ps.tailaccesses().begin(),
-                             ps.tailaccesses().end()},
       };
     }
   }
@@ -45,7 +42,7 @@ Controller::getStatus() {
 
 void Controller::resize(
     const std::vector<ProxyManager::CacheResize>& cacheResize) {
-  std::unique_lock<std::shared_timed_mutex> lock(m_proxiesMutex);
+  //  std::unique_lock<std::shared_timed_mutex> lock(m_proxiesMutex);
 
   if (cacheResize.size() != m_proxies.size()) {
     /*
@@ -75,7 +72,7 @@ void Controller::resize(
 grpc::Status Controller::Connect(grpc::ServerContext* context,
                                  const ::holpaca::ConnectRequest* request,
                                  ::holpaca::ConnectResponse* response) {
-  std::unique_lock<std::shared_timed_mutex> lock(m_proxiesMutex);
+  // std::unique_lock<std::shared_timed_mutex> lock(m_proxiesMutex);
   m_proxies[request->cacheaddress()] =
       ::holpaca::Stage::NewStub(grpc::CreateChannel(
           request->cacheaddress(), grpc::InsecureChannelCredentials()));
@@ -87,7 +84,7 @@ grpc::Status Controller::Connect(grpc::ServerContext* context,
 grpc::Status Controller::Disconnect(grpc::ServerContext* context,
                                     const ::holpaca::DisconnectRequest* request,
                                     ::holpaca::DisconnectResponse* response) {
-  std::unique_lock<std::shared_timed_mutex> lock(m_proxiesMutex);
+  // std::unique_lock<std::shared_timed_mutex> lock(m_proxiesMutex);
   // std::cout << "Disconnected from " << request->cacheaddress() << std::endl;
   m_proxies.erase(request->cacheaddress());
   return grpc::Status::OK;
