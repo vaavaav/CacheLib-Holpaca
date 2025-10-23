@@ -18,7 +18,7 @@ CacheAllocator<CacheTrait>::CacheAllocator(Config& config)
   m_metrics.reserve(64);
   m_qosLevels.reserve(64);
   m_proportions.reserve(64);
-  if (!m_kAddress.empty() || !config.m_controllerAddress.empty()) {
+  if (!m_kAddress.empty() && !config.m_controllerAddress.empty()) {
     m_server =
         grpc::ServerBuilder()
             .AddListeningPort(m_kAddress, grpc::InsecureServerCredentials())
