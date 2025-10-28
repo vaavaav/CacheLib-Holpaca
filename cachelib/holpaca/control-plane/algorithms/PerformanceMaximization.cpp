@@ -184,14 +184,14 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
             for (const auto& [size, mr] : poolStatus.m_MRC) {
               if (mr > 0.0) {
                 cacheSizes.push_back(size);
-                metrics.push_back(-kAvgDiskIOPS / mr);
+                metrics.push_back(-static_cast<double>(kAvgDiskIOPS) / mr);
               }
             }
             spline = tk::spline(cacheSizes, metrics,
                                 tk::spline::cspline_hermite, true);
 
-            double const kAdjustment =
-                (-kAvgThroughput) - spline(poolStatus.m_usedSize);
+            double const kAdjustment = spline(poolStatus.m_usedSize) +
+                                       static_cast<double>(kAvgThroughput);
 
             for (auto& metric : metrics) {
               metric += kAdjustment;
@@ -257,11 +257,13 @@ void PerformanceMaximization::loop(ProxyManager* const kProxyManager) {
            << newPoolSizePerCache[cacheId][poolId];
         if (poolStatus.m_MRC.size() >= m_kMRCMinLength) {
           ss << " ["
-             <<
-    context.m_cacheConfigs[cacheId].m_poolConfigs[poolId].m_lowerBound
+             << context.m_cacheConfigs[cacheId]
+                    .m_poolConfigs[poolId]
+                    .m_lowerBound
              << ", "
-             <<
-    context.m_cacheConfigs[cacheId].m_poolConfigs[poolId].m_upperBound
+             << context.m_cacheConfigs[cacheId]
+                    .m_poolConfigs[poolId]
+                    .m_upperBound
              << "]";
         }
         ss << std::endl;
