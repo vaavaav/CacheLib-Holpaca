@@ -39,7 +39,7 @@ class CacheAllocator : public ::facebook::cachelib::CacheAllocator<CacheTrait>,
 
   using Super = ::facebook::cachelib::CacheAllocator<CacheTrait>;
 
-  //  std::unordered_map<PoolId, std::mutex> m_shardMutexes;
+  std::unordered_map<PoolId, std::mutex> m_shardMutexes;
   std::unordered_map<PoolId, std::shared_ptr<Shards>> m_shards;
 
   std::unordered_map<PoolId, std::tuple<uint32_t, double, uint32_t>>

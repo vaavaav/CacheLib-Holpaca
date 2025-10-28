@@ -14,7 +14,7 @@ CacheAllocator<CacheTrait>::CacheAllocator(Config& config)
       m_kProportion(config.proportion) {
   // avoid reallocation during runtime
   // maximum tolerated number of pools by CacheLib
-  //  m_shardMutexes.reserve(64);
+  m_shardMutexes.reserve(64);
   m_shards.reserve(64);
   m_metrics.reserve(64);
   m_qosLevels.reserve(64);
@@ -109,7 +109,7 @@ grpc::Status CacheAllocator<CacheTrait>::GetStatus(
       ::holpaca::PoolStatus poolStatus;
       // get MRC
       {
-        //        std::lock_guard<std::mutex> lg(m_shardMutexes[poolId]);
+        std::lock_guard<std::mutex> lg(m_shardMutexes[poolId]);
         auto const& mrc = m_shards[poolId]->mrc();
         *poolStatus.mutable_mrc() = {mrc.begin(), mrc.end()};
       }
@@ -171,7 +171,7 @@ CacheAllocator<CacheTrait>::find(typename CacheAllocator<CacheTrait>::Key key) {
             .poolId;
     std::string keyStr(key.data(), key.size());
     uint32_t size = handle->getSize();
-    //    std::lock_guard<std::mutex> lg(m_shardMutexes[kPoolId]);
+    std::lock_guard<std::mutex> lg(m_shardMutexes[kPoolId]);
     m_shards[kPoolId]->feed(keyStr, size);
   }
 
@@ -190,7 +190,7 @@ bool CacheAllocator<CacheTrait>::insert(
     auto key = handle->getKey();
     std::string keyStr(key.data(), key.size());
     uint32_t size = handle->getSize();
-    //    std::lock_guard<std::mutex> lg(m_shardMutexes[pid]);
+    std::lock_guard<std::mutex> lg(m_shardMutexes[pid]);
     m_shards[pid]->erase(keyStr);
     m_shards[pid]->feed(keyStr, size);
   }
@@ -209,7 +209,7 @@ CacheAllocator<CacheTrait>::insertOrReplace(
     auto key = handle->getKey();
     std::string keyStr(key.data(), key.size());
     uint32_t size = handle->getSize();
-    //    std::lock_guard<std::mutex> lg(m_shardMutexes[pid]);
+    std::lock_guard<std::mutex> lg(m_shardMutexes[pid]);
     m_shards[pid]->erase(keyStr);
     m_shards[pid]->feed(keyStr, size);
   }
