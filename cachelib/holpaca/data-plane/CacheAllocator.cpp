@@ -111,19 +111,11 @@ grpc::Status CacheAllocator<CacheTrait>::GetStatus(
       {
         std::lock_guard<std::mutex> lg(m_shardMutexes[poolId]);
         auto const& mrc = m_shards[poolId]->mrc();
+        auto [diskIOPS, missRatio, throughput] = m_metrics[poolId];
         *poolStatus.mutable_mrc() = {mrc.begin(), mrc.end()};
-      }
-      {
-        poolStatus.set_diskiops(
-            [this, poolId]() { return std::get<0>(m_metrics[poolId]); }());
-      }
-      {
-        poolStatus.set_missratio(
-            [this, poolId]() { return std::get<1>(m_metrics[poolId]); }());
-      }
-      {
-        poolStatus.set_throughput(
-            [this, poolId]() { return std::get<2>(m_metrics[poolId]); }());
+        poolStatus.set_diskiops(diskIOPS);
+        poolStatus.set_missratio(missRatio);
+        poolStatus.set_throughput(throughput);
       }
       {
         poolStatus.set_qos([this, poolId]() { return m_qosLevels[poolId]; }());
@@ -221,6 +213,7 @@ void CacheAllocator<CacheTrait>::registerMetrics(PoolId poolId,
                                                  uint32_t diskIOPS,
                                                  double missRatio,
                                                  uint32_t throughput) {
+  std::lock_guard<std::mutex> lg(m_shardMutexes[poolId]);
   m_metrics[poolId] = {diskIOPS, missRatio, throughput};
 }
 
