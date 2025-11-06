@@ -336,7 +336,7 @@ bool PerformanceMaximization::Context::skip() const {
   return std::accumulate(m_cacheConfigs.begin(), m_cacheConfigs.end(), 0,
                          [](int acc, const auto& ccit) {
                            return acc + ccit.second.m_poolConfigs.size();
-                         }) <= 1;
+                         }) == 0;
 }
 
 void PerformanceMaximization::Context::step() {
